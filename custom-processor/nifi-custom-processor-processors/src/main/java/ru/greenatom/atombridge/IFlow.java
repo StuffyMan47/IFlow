@@ -55,8 +55,13 @@ public class IFlow extends AbstractProcessor {
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .build();
 
-    public static final Relationship Success = new Relationship.Builder()
-            .name("Success")
+    public static final Relationship Load = new Relationship.Builder()
+            .name("Load")
+            .description("Example relationship")
+            .build();
+
+    public static final Relationship Transform = new Relationship.Builder()
+            .name("Transform")
             .description("Example relationship")
             .build();
 
@@ -76,7 +81,8 @@ public class IFlow extends AbstractProcessor {
         this.descriptors = Collections.unmodifiableList(descriptors);
 
         final Set<Relationship> relationships = new HashSet<Relationship>();
-        relationships.add(Success);
+        relationships.add(Load);
+        relationships.add(Transform);
         relationships.add(Failur);
         this.relationships = Collections.unmodifiableSet(relationships);
     }
@@ -103,6 +109,6 @@ public class IFlow extends AbstractProcessor {
             return;
         }
 
-        session.transfer(flowFile, Success);
+        session.transfer(flowFile, Load);
     }
 }
