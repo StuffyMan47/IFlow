@@ -16,12 +16,9 @@
  */
 package ru.greenatom.atombridge;
 
+import org.apache.nifi.annotation.behavior.*;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.flowfile.FlowFile;
-import org.apache.nifi.annotation.behavior.ReadsAttribute;
-import org.apache.nifi.annotation.behavior.ReadsAttributes;
-import org.apache.nifi.annotation.behavior.WritesAttribute;
-import org.apache.nifi.annotation.behavior.WritesAttributes;
 import org.apache.nifi.annotation.lifecycle.OnScheduled;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
 import org.apache.nifi.annotation.documentation.SeeAlso;
@@ -33,6 +30,7 @@ import org.apache.nifi.processor.ProcessSession;
 import org.apache.nifi.processor.ProcessorInitializationContext;
 import org.apache.nifi.processor.Relationship;
 import org.apache.nifi.processor.util.StandardValidators;
+import org.apache.nifi.distributed.cache.client.DistributedMapCacheClient;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -55,6 +53,13 @@ public class IFlow extends AbstractProcessor {
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .build();
 
+    public static final PropertyDescriptor PROP_DISTRIBUTED_CACHE_SERVICE = new PropertyDescriptor.Builder()
+            .name("Distributed Cache Service")
+            .description("The Controller Service that is used to get the cached values.")
+            .required(true)
+            .identifiesControllerService(DistributedMapCacheClient.class)
+            .build();
+
     public static final Relationship Load = new Relationship.Builder()
             .name("Load")
             .description("Example relationship")
@@ -65,8 +70,8 @@ public class IFlow extends AbstractProcessor {
             .description("Example relationship")
             .build();
 
-    public static final Relationship Failur = new Relationship.Builder()
-            .name("Failur")
+    public static final Relationship Failure = new Relationship.Builder()
+            .name("Failure")
             .description("Example relationship")
             .build();
 
@@ -78,12 +83,13 @@ public class IFlow extends AbstractProcessor {
     protected void init(final ProcessorInitializationContext context) {
         final List<PropertyDescriptor> descriptors = new ArrayList<PropertyDescriptor>();
         descriptors.add(MY_PROPERTY);
+        descriptors.add(PROP_DISTRIBUTED_CACHE_SERVICE);
         this.descriptors = Collections.unmodifiableList(descriptors);
 
         final Set<Relationship> relationships = new HashSet<Relationship>();
         relationships.add(Load);
         relationships.add(Transform);
-        relationships.add(Failur);
+        relationships.add(Failure);
         this.relationships = Collections.unmodifiableSet(relationships);
     }
 
@@ -91,6 +97,8 @@ public class IFlow extends AbstractProcessor {
     public Set<Relationship> getRelationships() {
         return this.relationships;
     }
+
+
 
     @Override
     public final List<PropertyDescriptor> getSupportedPropertyDescriptors() {
@@ -108,6 +116,8 @@ public class IFlow extends AbstractProcessor {
         if ( flowFile == null ) {
             return;
         }
+
+        final DistributedMapCacheClient cache = context.getProperty(PROP_DISTRIBUTED_CACHE_SERVICE).asControllerService(DistributedMapCacheClient.class);
 
         session.transfer(flowFile, Load);
     }
