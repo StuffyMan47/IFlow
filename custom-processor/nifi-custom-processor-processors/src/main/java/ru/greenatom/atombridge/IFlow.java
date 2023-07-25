@@ -56,6 +56,13 @@ public class IFlow extends AbstractProcessor {
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .build();
 
+    public static final PropertyDescriptor PROP_DISTRIBUTED_CACHE_SERVICE = new PropertyDescriptor.Builder()
+            .name("Distributed Cache Service")
+            .description("The Controller Service that is used to get the cached values.")
+            .required(true)
+            .identifiesControllerService(DistributedMapCacheClient.class)
+            .build();
+
     public static final Relationship Load = new Relationship.Builder()
             .name("Load")
             .description("Example relationship")

@@ -36,6 +36,12 @@
             <artifactId>nifi-custom-processor-processors</artifactId>
             <version>4.0.1.0</version>
         </dependency>
+        <dependency>
+            <groupId>org.apache.nifi</groupId>
+            <artifactId>nifi-standard-services-api-nar</artifactId>
+            <version>1.12.1</version>
+            <type>nar</type>
+        </dependency>
     </dependencies>
 
 </project>
