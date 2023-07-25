@@ -33,6 +33,7 @@ import org.apache.nifi.processor.ProcessSession;
 import org.apache.nifi.processor.ProcessorInitializationContext;
 import org.apache.nifi.processor.Relationship;
 import org.apache.nifi.processor.util.StandardValidators;
+import org.apache.nifi.distributed.cache.client.DistributedMapCacheClient;
 
 import java.util.ArrayList;
 import java.util.Collections;
