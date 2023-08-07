@@ -95,10 +95,6 @@ public class IFlow extends AbstractProcessor {
     private int traceCount = 0;
     private String traceOut1;
     private int traceCount1 = 0;
-<<<<<<< HEAD
-
-=======
->>>>>>> origin/master
 
     public static final PropertyDescriptor MY_PROPERTY = new PropertyDescriptor
             .Builder().name("MY_PROPERTY")
@@ -180,15 +176,16 @@ public class IFlow extends AbstractProcessor {
         }
 
         /** Посмотреть откуда берётся IflowMapCacheLookupClient и т.д **/
+        //todo Пофиксиить
         String iflowMapCacheLookupClientName = IflowMapCacheLookupClient.getValue();
         String xsdMapCacheLookupClientName = XsdMapCacheLookupClient.getValue();
         String xsltMapCacheLookupClientName = XsltMapCacheLookupClient.getValue();
 
 
         try {
-            var iflowCacheMap = getServiceController(iflowMapCacheLookupClientName);
-            var xsdCacheMap = getServiceController(xsdMapCacheLookupClientName);
-            var xsltCacheMap = getServiceController(xsltMapCacheLookupClientName);
+            var iflowCacheMap = getServiceController(iflowMapCacheLookupClientName, context);
+            var xsdCacheMap = getServiceController(xsdMapCacheLookupClientName, context);
+            var xsltCacheMap = getServiceController(xsltMapCacheLookupClientName, context);
 
             String ret = iflowCacheMap.get(flowFile.getAttribute('business.process.name'),
                     new Serializer<String>(){
@@ -213,8 +210,6 @@ public class IFlow extends AbstractProcessor {
 
         }
 
-
-
         final DistributedMapCacheClient cache = context.getProperty(PROP_DISTRIBUTED_CACHE_SERVICE).asControllerService(DistributedMapCacheClient.class);
 
         session.transfer(flowFile, Load);
@@ -222,6 +217,7 @@ public class IFlow extends AbstractProcessor {
         var lookup = context.;
     }
 
+    /**Не до конца понимает, что должно вернуть**/
     public ControllerService getServiceController (final String name, final ProcessContext context){
         trace(String.format("get service controller: %s", name));
         var lookup = context.getControllerServiceLookup();
