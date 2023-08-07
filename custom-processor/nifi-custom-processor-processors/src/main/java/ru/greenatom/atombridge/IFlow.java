@@ -18,6 +18,7 @@ package ru.greenatom.atombridge;
 
 import org.apache.nifi.annotation.behavior.*;
 import org.apache.nifi.components.PropertyDescriptor;
+import org.apache.nifi.controller.ControllerService;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.annotation.lifecycle.OnScheduled;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
@@ -68,6 +69,9 @@ import javax.xml.XMLConstants;
 import javax.xml.transform.Source;
 import javax.xml.transform.stream.StreamSource;
 import javax.xml.validation.*;
+
+import org.codehaus.groovy.ant.Groovy;
+import org.codehaus.groovy.runtime.DefaultGroovyMethods;
 import org.xml.sax.SAXException;
 
 import java.util.regex.Matcher;
@@ -83,6 +87,11 @@ import org.apache.nifi.stream.io.StreamUtils;
 @WritesAttributes({@WritesAttribute(attribute="", description="")})
 public class IFlow extends AbstractProcessor {
 
+    private Object xslRemoveEnv = null;
+    private String traceOut;
+    private int traceCount = 0;
+    private String traceOut1;
+    private int traceCount1 = 0;
 
     public static final PropertyDescriptor MY_PROPERTY = new PropertyDescriptor
             .Builder().name("MY_PROPERTY")
@@ -159,5 +168,26 @@ public class IFlow extends AbstractProcessor {
         final DistributedMapCacheClient cache = context.getProperty(PROP_DISTRIBUTED_CACHE_SERVICE).asControllerService(DistributedMapCacheClient.class);
 
         session.transfer(flowFile, Load);
+
+        var lookup = context.;
+    }
+
+    public ControllerService getServiceController (final String name, final ProcessContext context){
+        trace(String.format("get service controller: %s", name));
+        var lookup = context.getControllerServiceLookup();
+        String serviceId = lookup.getControllerServiceIdentifiers(ControllerService.class)
+                .stream()
+                .filter(cs -> lookup.getControllerServiceName(cs).equals(name))
+                .findFirst()
+                .orElse(null);
+        return lookup.getControllerService(serviceId);
+    }
+
+    public void trace(String message) {
+        traceOut += String.format("\r\n+++++++ %s +++++++:%d",traceCount, message);
+    }
+
+    public void trace1(String message) {
+        traceOut1 += String.format("\r\n+++++++ %s +++++++:%d",traceCount1, message);
     }
 }
