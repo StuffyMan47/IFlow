@@ -38,12 +38,51 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+//Импорты из груви скрипта
+import org.apache.nifi.flowfile.FlowFile;
+import org.apache.nifi.processor.ProcessSession;
+import org.apache.nifi.processor.io.OutputStreamCallback;
+import org.apache.nifi.processor.io.StreamCallback;
+import org.apache.nifi.serialization.record.Record;
+
+import javax.xml.transform.stream.StreamResult;
+import javax.xml.transform.stream.StreamSource;
+
+import javax.xml.xpath.*;
+import javax.xml.parsers.DocumentBuilderFactory;
+import org.apache.nifi.distributed.cache.client.Deserializer;
+import org.apache.nifi.distributed.cache.client.Serializer;
+import org.apache.nifi.distributed.cache.client.exception.DeserializationException;
+import org.apache.nifi.distributed.cache.client.exception.SerializationException;
+
+import org.apache.nifi.provenance.ProvenanceReporter;
+
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import org.apache.nifi.components.PropertyValue;
+import java.util.Arrays;
+import org.apache.nifi.lookup.StringLookupService;
+
+import javax.xml.XMLConstants;
+import javax.xml.transform.Source;
+import javax.xml.transform.stream.StreamSource;
+import javax.xml.validation.*;
+import org.xml.sax.SAXException;
+
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.nio.charset.Charset;
+
+import org.apache.nifi.stream.io.StreamUtils;
+
 @Tags({"example"})
 @CapabilityDescription("Provide a description")
 @SeeAlso({})
 @ReadsAttributes({@ReadsAttribute(attribute="", description="")})
 @WritesAttributes({@WritesAttribute(attribute="", description="")})
 public class IFlow extends AbstractProcessor {
+
 
     public static final PropertyDescriptor MY_PROPERTY = new PropertyDescriptor
             .Builder().name("MY_PROPERTY")
