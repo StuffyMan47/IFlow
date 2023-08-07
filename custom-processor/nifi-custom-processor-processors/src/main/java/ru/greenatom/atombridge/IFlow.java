@@ -18,6 +18,7 @@ package ru.greenatom.atombridge;
 
 import org.apache.nifi.annotation.behavior.*;
 import org.apache.nifi.components.PropertyDescriptor;
+import org.apache.nifi.controller.ControllerService;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.annotation.lifecycle.OnScheduled;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
@@ -45,8 +46,6 @@ import org.apache.nifi.processor.io.OutputStreamCallback;
 import org.apache.nifi.processor.io.StreamCallback;
 import org.apache.nifi.serialization.record.Record;
 
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.transform.stream.StreamResult;
 import javax.xml.transform.stream.StreamSource;
 
@@ -70,6 +69,9 @@ import javax.xml.XMLConstants;
 import javax.xml.transform.Source;
 import javax.xml.transform.stream.StreamSource;
 import javax.xml.validation.*;
+
+import org.codehaus.groovy.ant.Groovy;
+import org.codehaus.groovy.runtime.DefaultGroovyMethods;
 import org.xml.sax.SAXException;
 
 import java.util.regex.Matcher;
@@ -78,7 +80,6 @@ import java.nio.charset.Charset;
 
 import org.apache.nifi.stream.io.StreamUtils;
 
-import groovy.lang.Binding;
 @Tags({"example"})
 @CapabilityDescription("Provide a description")
 @SeeAlso({})
@@ -91,7 +92,6 @@ public class IFlow extends AbstractProcessor {
     private int traceCount = 0;
     private String traceOut1;
     private int traceCount1 = 0;
-
 
     public static final PropertyDescriptor MY_PROPERTY = new PropertyDescriptor
             .Builder().name("MY_PROPERTY")
@@ -165,51 +165,29 @@ public class IFlow extends AbstractProcessor {
             return;
         }
 
-        XPath xpath = XPathFactory.newInstance().newXPath();
-        try {
-            var builder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
-        } catch (ParserConfigurationException e) {
-            throw new RuntimeException(e);
-        }
-
-        /** Посмотреть откуда берётся IflowMapCacheLookupClient и т.д **/
-        String iflowMapCacheLookupClientName = IflowMapCacheLookupClient.getValue();
-        String xsdMapCacheLookupClientName = XsdMapCacheLookupClient.getValue();
-        String xsltMapCacheLookupClientName = XsltMapCacheLookupClient.getValue();
-
-
-        try {
-            var iflowCacheMap = getServiceController(iflowMapCacheLookupClientName);
-            var xsdCacheMap = getServiceController(xsdMapCacheLookupClientName);
-            var xsltCacheMap = getServiceController(xsltMapCacheLookupClientName);
-
-            String ret = iflowCacheMap.get(flowFile.getAttribute('business.process.name'),
-                    new Serializer<String>(){
-
-                        @Override
-                        public void serialize(final String value, final OutputStream out) throws SerializationException, IOException {
-                            out.write(value.getBytes(StandardCharsets.UTF_8));
-                        }
-
-                    },
-                    new Deserializer<String>(){
-
-                        @Override
-                        public String deserialize(final byte[] value) throws DeserializationException, IOException {
-                            if (value == null) {
-                                return null;
-                            }
-                            return new String(value, StandardCharsets.UTF_8);
-
-                        }});
-        } catch (Exception ex) {
-
-        }
-
-
-
         final DistributedMapCacheClient cache = context.getProperty(PROP_DISTRIBUTED_CACHE_SERVICE).asControllerService(DistributedMapCacheClient.class);
 
         session.transfer(flowFile, Load);
+
+        var lookup = context.;
+    }
+
+    public ControllerService getServiceController (final String name, final ProcessContext context){
+        trace(String.format("get service controller: %s", name));
+        var lookup = context.getControllerServiceLookup();
+        String serviceId = lookup.getControllerServiceIdentifiers(ControllerService.class)
+                .stream()
+                .filter(cs -> lookup.getControllerServiceName(cs).equals(name))
+                .findFirst()
+                .orElse(null);
+        return lookup.getControllerService(serviceId);
+    }
+
+    public void trace(String message) {
+        traceOut += String.format("\r\n+++++++ %s +++++++:%d",traceCount, message);
+    }
+
+    public void trace1(String message) {
+        traceOut1 += String.format("\r\n+++++++ %s +++++++:%d",traceCount1, message);
     }
 }
