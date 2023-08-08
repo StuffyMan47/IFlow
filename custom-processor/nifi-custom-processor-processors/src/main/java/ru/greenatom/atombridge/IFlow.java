@@ -24,6 +24,7 @@ import org.apache.nifi.annotation.lifecycle.OnScheduled;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
 import org.apache.nifi.annotation.documentation.SeeAlso;
 import org.apache.nifi.annotation.documentation.Tags;
+import org.apache.nifi.logging.ComponentLog;
 import org.apache.nifi.processor.exception.ProcessException;
 import org.apache.nifi.processor.AbstractProcessor;
 import org.apache.nifi.processor.ProcessContext;
@@ -83,7 +84,6 @@ import java.nio.charset.Charset;
 import org.apache.nifi.stream.io.StreamUtils;
 
 import groovy.lang.Binding;
-import java.util.logging.Logger;
 @Tags({"example"})
 @CapabilityDescription("Provide a description")
 @SeeAlso({})
@@ -97,7 +97,7 @@ public class IFlow extends AbstractProcessor {
     private String traceOut1;
     private int traceCount1 = 0;
 
-    public static final Logger log = Logger.getLogger("");
+    private final ComponentLog logger = getLogger();
 
     public static final PropertyDescriptor MY_PROPERTY = new PropertyDescriptor
             .Builder().name("MY_PROPERTY")
@@ -171,6 +171,8 @@ public class IFlow extends AbstractProcessor {
             return;
         }
 
+
+
         XPath xpath = XPathFactory.newInstance().newXPath();
         try {
             var builder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
@@ -190,7 +192,7 @@ public class IFlow extends AbstractProcessor {
             var xsdCacheMap = getServiceController(xsdMapCacheLookupClientName, context);
             var xsltCacheMap = getServiceController(xsltMapCacheLookupClientName, context);
 
-            String ret = iflowCacheMap.get(flowFile.getAttribute('business.process.name'),
+            String ret = iflowCacheMap.get(flowFile.getAttribute("business.process.name"),
                     new Serializer<String>(){
 
                         @Override
@@ -211,14 +213,22 @@ public class IFlow extends AbstractProcessor {
                         }});
             if (ret != null) {
                 trace("iFlow not found, return 501");
-                log.info( "iFlow named:${flowFile.getAttribute('business.process.name')} not found!");
-                flowFile.'iflow.error' = "iFlow named:${flowFile.getAttribute('business.process.name')} not found!";
-                flowFile.'iflow.status.code' = getResponse('', '501');
-                session.transfer(flowFile, REL_FAILURE);
+                logger.error( "iFlow named:" + flowFile.getAttribute("business.process.name") + "not found!");
+                session.putAttribute(flowFile, "iflow.error", "iFlow named:" + flowFile.getAttribute("business.process.name") + "not found!")
+                session.putAttribute(flowFile, "iflow.status.code", getResponse("", "501"));
+                session.transfer(flowFile, Failure);
                 return;
             } else {
-                trace('readed iFlow config')
+                trace("readed iFlow config");
             }
+            trace("start parsing json iFlow");
+
+            //todo ret всегда null перепроверить
+            var iflow = new groovy.json.JsonSlurper().parseText(ret);
+
+            ArrayList<Object> targets = iflow.targets as ArrayList;
+            trace("full list of defined target systems" + targets);
+
         } catch (Exception ex) {
 
         }
@@ -248,5 +258,17 @@ public class IFlow extends AbstractProcessor {
 
     public void trace1(String message) {
         traceOut1 += String.format("\r\n+++++++ %s +++++++:%d",traceCount1, message);
+    }
+
+    public String getResponse(String protocol, String code) {
+        if (protocol.equals("XI")) {
+            switch (code) {
+                case "200":
+                    return "XI_OK";
+            }
+        } else {
+            return code;
+        }
+        return null;
     }
 }
