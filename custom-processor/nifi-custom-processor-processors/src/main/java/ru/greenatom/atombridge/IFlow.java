@@ -83,6 +83,7 @@ import java.nio.charset.Charset;
 import org.apache.nifi.stream.io.StreamUtils;
 
 import groovy.lang.Binding;
+import java.util.logging.Logger;
 @Tags({"example"})
 @CapabilityDescription("Provide a description")
 @SeeAlso({})
@@ -95,6 +96,8 @@ public class IFlow extends AbstractProcessor {
     private int traceCount = 0;
     private String traceOut1;
     private int traceCount1 = 0;
+
+    public static final Logger log = Logger.getLogger("");
 
     public static final PropertyDescriptor MY_PROPERTY = new PropertyDescriptor
             .Builder().name("MY_PROPERTY")
@@ -206,6 +209,16 @@ public class IFlow extends AbstractProcessor {
                             return new String(value, StandardCharsets.UTF_8);
 
                         }});
+            if (ret != null) {
+                trace("iFlow not found, return 501");
+                log.info( "iFlow named:${flowFile.getAttribute('business.process.name')} not found!");
+                flowFile.'iflow.error' = "iFlow named:${flowFile.getAttribute('business.process.name')} not found!";
+                flowFile.'iflow.status.code' = getResponse('', '501');
+                session.transfer(flowFile, REL_FAILURE);
+                return;
+            } else {
+                trace('readed iFlow config')
+            }
         } catch (Exception ex) {
 
         }
@@ -214,7 +227,7 @@ public class IFlow extends AbstractProcessor {
 
         session.transfer(flowFile, Load);
 
-        var lookup = context.;
+//        var lookup = context.;
     }
 
     /**Не до конца понимает, что должно вернуть**/
