@@ -33,6 +33,7 @@ import org.apache.nifi.processor.Relationship;
 import org.apache.nifi.processor.util.StandardValidators;
 import org.apache.nifi.distributed.cache.client.DistributedMapCacheClient;
 
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -74,6 +75,7 @@ import javax.xml.validation.*;
 
 import org.codehaus.groovy.ant.Groovy;
 import org.codehaus.groovy.runtime.DefaultGroovyMethods;
+import org.w3c.dom.Element;
 import org.xml.sax.SAXException;
 
 import java.util.regex.Matcher;
@@ -84,6 +86,16 @@ import org.apache.nifi.stream.io.StreamUtils;
 
 import groovy.lang.Binding;
 import java.util.logging.Logger;
+
+import static org.codehaus.groovy.tools.xml.DomToGroovy.parse;
+
+import org.w3c.dom.*;
+import javax.xml.xpath.*;
+import javax.xml.parsers.*;
+import java.io.*;
+import java.util.ArrayList;
+import java.util.List;
+
 @Tags({"example"})
 @CapabilityDescription("Provide a description")
 @SeeAlso({})
@@ -240,6 +252,60 @@ public class IFlow extends AbstractProcessor {
                 .findFirst()
                 .orElse(null);
         return lookup.getControllerService(serviceId);
+    }
+
+    //старая версия листа
+//    List<Object> evaluateXPath(InputStream inputStream, String xpathQuery){
+//        Element records = null;
+//        try {
+//            records = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(inputStream).getDocumentElement();
+//        } catch (SAXException | IOException | ParserConfigurationException e) {
+//            throw new RuntimeException(e);
+//        }
+//        XPath xPath = XPathFactory.newInstance().newXPath();
+//        Object nodes;
+//        try {
+//            nodes = xPath.evaluate(xpathQuery, records, XPathConstants.NODESET);
+//        } catch (XPathExpressionException e) {
+//            throw new RuntimeException(e);
+//        }
+//        return DefaultGroovyMethods.collect{node -> node.textContent};
+//
+//    }
+    public List<String> evaluateXPath(InputStream inputStream, String xpathQuery) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        DocumentBuilder builder = factory.newDocumentBuilder();
+        Document document = builder.parse(inputStream);
+
+        XPathFactory xPathFactory = XPathFactory.newInstance();
+        XPath xpath = xPathFactory.newXPath();
+
+
+        NodeList nodes = (NodeList) xpath.evaluate(xpathQuery, document.getDocumentElement(), XPathConstants.NODESET);
+
+        List<String> result = new ArrayList<>();
+        for (int i = 0; i < nodes.getLength(); i++) {
+            result.add(nodes.item(i).getTextContent());
+        }
+        return result;
+    }
+
+    //Не уверен в правильности из-за кучи try catch
+    public Object evaluateXPathValue(InputStream inputStream, String xpathQuery){
+        Element records = null;
+        try {
+            records = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(inputStream).getDocumentElement();
+        } catch (SAXException | IOException | ParserConfigurationException e) {
+            throw new RuntimeException(e);
+        }
+        XPath xPath = XPathFactory.newInstance().newXPath();
+        String res = null;
+        try {
+            res = xPath.evaluate(xpathQuery, records);
+        } catch (XPathExpressionException e) {
+            throw new RuntimeException(e);
+        }
+        return res;
     }
 
     public void trace(String message) {
