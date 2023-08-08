@@ -319,6 +319,17 @@ public class IFlow extends AbstractProcessor {
         return res;
     }
 
+//    def stream2string(InputStream inputStream) {
+//        ByteArrayOutputStream result = new ByteArrayOutputStream()
+//        byte[] buffer = new byte[1024]
+//        for (int length; (length = inputStream.read(buffer)) != -1; ) {
+//            result.write(buffer, 0, length)
+//        }
+//        // StandardCharsets.UTF_8.name() > JDK 7
+//        inputStream.reset()
+//        return result.toString('UTF-8')
+//    }
+
     public void trace(String message) {
         traceOut += String.format("\r\n+++++++ %s +++++++:%d",traceCount, message);
     }
