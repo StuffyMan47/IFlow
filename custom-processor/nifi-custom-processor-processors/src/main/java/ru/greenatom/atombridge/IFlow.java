@@ -31,16 +31,13 @@ import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
 import org.apache.nifi.processor.ProcessorInitializationContext;
 import org.apache.nifi.processor.Relationship;
+import org.apache.nifi.processor.io.InputStreamCallback;
 import org.apache.nifi.processor.util.StandardValidators;
 import org.apache.nifi.distributed.cache.client.DistributedMapCacheClient;
 
 import java.io.InputStream;
 import java.io.StringReader;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 //Импорты из груви скрипта
 import org.apache.nifi.flowfile.FlowFile;
@@ -67,7 +64,6 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import org.apache.nifi.components.PropertyValue;
-import java.util.Arrays;
 import org.apache.nifi.lookup.StringLookupService;
 
 import javax.xml.XMLConstants;
@@ -253,15 +249,20 @@ public class IFlow extends AbstractProcessor {
                     trace1("+loopback " + flowFile.getAttribute("xform.stage"));
                     String targetId = flowFile.getAttribute("target.id");
                     int targetIndx = findTarget(targets, targetId);
-                    if (targetIndx < 0) throw new IllegalArgumentException('Target not found')
-                    def target = targets.get(targetIndx);
+                    if (targetIndx < 0) {
+                        throw new IllegalArgumentException("Target not found");
+                    }
+                    JSONObject target = targets.getJSONObject(targetIndx);
 
-                    ArrayList xforms = target.transformations as ArrayList
+                    JSONArray xforms = iflow.getJSONArray("xforms");
 
-                    int xformPath = Integer.parseInt(flowFile.getAttribute('xform.path'));
+                    int xformPath = Integer.parseInt(flowFile.getAttribute("xform.path"));
 
-                    if (xformPath > -1 & xformPath < xforms.size()) {
-                        if (target.output ==" 'JSON'") flowFile.putAttribute("target.output", "JSON");
+                    if (xformPath > -1 & xformPath < xforms.length()) {
+                        if (target.get("output") =="JSON") {
+                            flowFile.putAttribute("target.output", "JSON");
+                            session.putAttribute(flowFile, "target.output", "JSON");
+                        }
                         def xform = xforms.get(xformPath);
                         def result = processXform(flowFile, xform, targetId);
                         if (result == null) {
@@ -432,6 +433,277 @@ public class IFlow extends AbstractProcessor {
 //        var lookup = context.;
     }
 
+    //Returns processed FlowFile or ArrayList of processed FlowFiles
+    private FlowFile processXform(FlowFile flowFile, ArrayList xforms, String targetId) throws Exception{
+        boolean isFlowFileSuppressed = false;
+        int prevStageIndx = -1;
+
+        session.putAttribute(flowFile, "target.id", targetId);
+
+        //If a flow file processed previosly, start right after the previous stage
+        //todo Условие перепроверить, поставил на первое время..
+        if (flowFile.getAttribute("xform.stage") != null) {
+            prevStageIndx = Integer.parseInt(flowFile.getAttribute("xform.stage"));
+        } else {
+            session.putAttribute(flowFile, "xform.stage", "0");
+        }
+        boolean isPropagated = false;
+
+        //Processing transformation for a target system
+        int currStageIndx = -1;
+        trace1("ID " + targetId);
+        trace1("prev stage " + prevStageIndx);
+
+        trace1(" " + xforms);
+        session.putAttribute(flowFile, "xform.stage", "0");
+
+        session.getProvenanceReporter().modifyContent(flowFile, "wsrhsrh");
+
+        for (String xform : xforms) {
+            //Stop processing flow file if it is suppressed at routing stage
+            if (isFlowFileSuppressed) {
+                return null;
+            }
+            currStageIndx++;
+            session.putAttribute(flowFile, "xform.stage", currStageIndx);
+
+            //Start process right after the previous stage
+            if (currStageIndx > prevStageIndx) {
+                trace1("Stage " + String.valueOf(currStageIndx));
+                String[] nameParamsPair = xform.split("://");
+                Map<String, String> params = null;
+                if (nameParamsPair.length > 1) {
+                    //Params must follow after ? symbol
+                    params = parseParams(nameParamsPair[1].substring(1));
+                }
+                for (Map.Entry<String, String> paramEntry : params.entrySet()) {
+                    trace("Key " + paramEntry.getKey() + " val " + paramEntry.getValue());
+                }
+                String name = nameParamsPair.length > 1 ? nameParamsPair[0] : xform;
+                trace("processing " + String.valueOf(currStageIndx) + " stage");
+
+                switch (name) {
+                    case("SyncResponse"):
+                        syncResponse(flowFile);
+                        break;
+                    case("RouteOnContent"):
+                        //Have to transfer a flow file to the special RouteOnContent processor group
+                        String param = params.get("MatchRequirement");
+//                        if (!param) throw new IllegalArgumentException(name + ' ' + param);
+                        checkParam(param, name);
+                        session.putAttribute(flowFile, "content.match.strategy", param);
+                        param = params.get("RouteCondition");
+//                        if (!param) throw new IllegalArgumentException(name + ' ' + param);
+                        checkParam(param, name);
+                        PropertyValue propValue = context.newPropertyValue(param);
+                        String s = propValue.evaluateAttributeExpressions(flowFile).getValue();
+                        session.putAttribute(flowFile, "route.on.content.condition", s);
+                        param = params.get("Result");
+                        propValue = context.newPropertyValue(param);
+                        s = propValue.evaluateAttributeExpressions(flowFile).getValue();
+                        session.putAttribute(flowFile, "route.on.content.result", s);
+                        session.putAttribute(flowFile, "xform.group", "RouteOnContent");
+                        isPropagated = true;
+                        break;
+                    case("UpdateAttribute"):
+                        //We have to support the Nifi EL in attributes
+                        //So create temp hidden property to provide EL capabilities
+                        for (Map.Entry<String, String> entry : params.entrySet()) {
+                            PropertyValue propValue = context.newPropertyValue(entry.getValue());
+                            String attrValue = propValue.evaluateAttributeExpressions(flowFile).getValue();
+                            flowFile = session.putAttribute(flowFile, entry.getKey(), attrValue);
+                        }
+                        break;
+                    case("RouteOnAttribute"):
+                        String param = params.get("RoutingStrategy");
+//                        if (!param) throw new IllegalArgumentException(name + ' ' + param);
+                        checkParam(param, name);
+                        param = params.get("Condition");
+//                        if (!param) throw new IllegalArgumentException(name + ' ' + param);
+                        checkParam(param, name);
+                        PropertyValue propValue = context.newPropertyValue(param);
+                        String res = propValue.evaluateAttributeExpressions(flowFile).getValue();
+                        if (res == "false") {
+                            isFlowFileSuppressed = true;
+                            //был в изначальном скрипте: throw new Exception('Result ' + res + ' does not match condition')
+                        }
+                        break;
+                    case("ReplaceText"):
+                        //Have to transfer a flow file to the special ReplaceText processor group
+                        //TODO не совсем понятно про param здесь, в исходном скрипте он подсвечем серым
+                        //TODO Имелось в виду replacementStrategy вместо param или так и задуманно?
+                        String replacementStrategy = params.get("ReplacementStrategy");
+//                        if (!replacementStrategy) throw new IllegalArgumentException(name + ' ' + param);
+                        checkParam(replacementStrategy, name);
+                        flowFile.'replace.text.mode' = replacementStrategy;
+                        session.putAttribute(flowFile, "replace.text.mode", replacementStrategy);
+                        String searchValue = params.get("SearchValue");
+//                        if (!searchValue) throw new IllegalArgumentException(name + ' ' + param);
+                        checkParam(searchValue, name);
+                        PropertyValue propValue = context.newPropertyValue(searchValue);
+                        searchValue = propValue.evaluateAttributeExpressions(flowFile).getValue();
+                        session.putAttribute(flowFile, "replace.text.search.value", searchValue);
+                        String replacementValue = params.get("ReplacementValue");
+//                        if (!replacementValue) throw new IllegalArgumentException(name + ' ' + param);
+                        checkParam(replacementValue, name);
+                        propValue = context.newPropertyValue(replacementValue);
+                        replacementValue = propValue.evaluateAttributeExpressions(flowFile).getValue();
+                        session.putAttribute(flowFile, "replace.text.replacement.value", replacementValue);
+                        final int fileSize = (int) flowFile.getSize();
+                        flowFile = replaceText(flowFile, replacementStrategy, searchValue,
+                                replacementValue, "EntireText", StandardCharsets.UTF_8, fileSize);
+                        break;
+                    case("EvaluateXQuery"):
+                        String param = params.get("Destination");
+                        if (!param.equals("flowfile-attribute")) {
+                            throw new IllegalArgumentException(name + ' ' + param);
+                        }
+                        params.remove("Destination");
+                        for (Map.Entry<String, String> paramEntry : params.entrySet()) {
+                            trace("Processing ${paramEntry.getKey()} ");
+
+                            if (paramEntry.getValue().indexOf("count(") > -1) {
+                                trace("+count");
+                                final StringBuilder sb = new StringBuilder();
+                                session.read(flowFile, new InputStreamCallback(){
+
+                                    @Override
+                                    public void process(InputStream is) throws IOException{
+                                        var r = evaluateXPathValue(is,
+                                                paramEntry.getValue().replace("\\\\", "\\"));
+                                        sb.append(r);
+                                    }
+
+                                });
+                                session.putAttribute(flowFile, paramEntry.getKey(), sb.toString());
+                            } else {
+                                //final ByteArrayOutputStream baos = new ByteArrayOutputStream()
+                                final List<String> list = new ArrayList<>();
+
+                                session.read(flowFile, new InputStreamCallback(){
+
+                                    @Override
+                                    public void process(InputStream is) throws IOException{
+                                        List<Object> nodes = evaluateXPath(is,
+                                                paramEntry.getValue().replace("\\\\", "\\"));
+
+                                        for (Object node : nodes) {
+                                            list.add(node);
+                                        }
+
+                                    }
+
+                                });
+
+                                //res = baos.toString()
+                                trace1("+res");
+                                if (list.size() == 1) {
+                                    session.putAttribute(flowFile, paramEntry.getKey(), list.get(0));
+                                    trace1("EvalXq res ${paramEntry.getKey()} " + list.get(0));
+                                } else {
+                                    int sfx = 1;
+                                    for (String s : list) {
+                                        String attrName = paramEntry.getKey() + '.' + String.valueOf(sfx);
+                                        trace1("EvalXq res ${attrName} " + s);
+                                        session.putAttribute(flowFile, attrName, s);
+                                        sfx++;
+                                    }
+                                }
+                            }
+
+                            //String r = Arrays.toString(res)
+                        }
+                        break;
+                    case("ApplyXslt"):
+                        final String param = params.get("Name");
+                        checkParam(param, name);
+//                        if (!param) throw new IllegalArgumentException(name + ' ' + param);
+                        flowFile = session.write(flowFile, new StreamCallback(){
+
+                            @Override
+                            void process(InputStream is, OutputStream os) throws IOException{
+                                applyXslt(is, os, param);
+                                os.flush();
+                            }
+
+                        });
+                        break;
+                    case("DuplicateFlowFile"):
+                        String param = params.get("Number");
+                        checkParam(param, name);
+//                        if (param == null) {
+//                            throw new IllegalArgumentException(name + ' ' + param);
+//                        }
+                        PropertyValue propValue = context.newPropertyValue(param);
+                        param = propValue.evaluateAttributeExpressions(flowFile).getValue();
+                        int numOfCopies = Integer.parseInt(param);
+                        ArrayList<FlowFile> res = []
+
+                        session.putAttribute(flowFile, "copy.index", 0);
+
+                        if (currStageIndx == xforms.size() - 1) {
+                            flowFile = session.removeAttribute(f, "xform.group");
+                        }
+                        String ffid = flowFile.getAttribute("uuid");
+                        for (int i = 0; i < numOfCopies; i++) {
+                            FlowFile f = session.clone(flowFile);
+                            session.putAttribute(flowFile, "copy.index", String.valueOf(i + 1));
+                            graylogNotifyStart(f, ffid);
+                            FlowFile ff = null;
+                            if (currStageIndx < xforms.size() - 1) {
+                                ff = processXform(f, xforms, targetId);
+                            }
+                            if (ff == null) {
+                                session.remove(f);
+                            } else {
+                                res.add(ff);
+                            }
+                        }
+                        if (currStageIndx < xforms.size() - 1) {
+                            ff = processXform(flowFile, xforms, targetId);
+                            if (ff == null) {
+                                session.remove(flowFile);
+                            } else {
+                                res.add(ff);
+                            }
+                        } else {
+                            res.add(flowFile);
+                        }
+                        return res
+                    default:
+                        for (Map.Entry<String, String> entry : params.entrySet()) {
+                            flowFile = session.putAttribute(flowFile,
+                                    entry.getKey(), entry.getValue());
+                        }
+                        session.putAttribute(flowFile, "xform.group", name);
+                        break;
+                }
+                graylogNotify(flowFile, name);
+            }
+            if (isPropagated) {
+                break;
+            }
+        }
+        trace("Stage is " + String.valueOf(currStageIndx) + " size " + String.valueOf(xforms.size()));
+        if (currStageIndx == xforms.size() - 1) {
+            if (isPropagated) {
+                if (!flowFile.getAttribute("target.output").equals("JSON")) {
+                    //Red pill for last xform to transfer flow file to the upload group
+                    session.putAttribute(flowFile, "xform.last", "true");
+                }
+            } else {
+                if (flowFile.getAttribute("target.output").equals("JSON")) {
+                    flowFile = convertFlowFile(flowFile);
+                }
+                //Move right to upload group
+                flowFile = session.removeAttribute(flowFile, "xform.group");
+            }
+        }
+
+        trace1("FF stage " + flowFile.getAttribute("xform.stage"));
+        return flowFile;
+    }
+
     /**Не до конца понимает, что должно вернуть**/
     private ControllerService getServiceController (final String name, final ProcessContext context){
         trace(String.format("get service controller: %s", name));
@@ -444,8 +716,8 @@ public class IFlow extends AbstractProcessor {
         return lookup.getControllerService(serviceId);
     }
 
-    private void trace(String message) {
-    //старая версия листа
+//    private void trace(String message) {
+//    //старая версия листа
 //    List<Object> evaluateXPath(InputStream inputStream, String xpathQuery){
 //        Element records = null;
 //        try {
@@ -462,7 +734,7 @@ public class IFlow extends AbstractProcessor {
 //        }
 //        return DefaultGroovyMethods.collect{node -> node.textContent};
 //
-    }
+//    }
 
     public List<String> evaluateXPath(InputStream inputStream, String xpathQuery) throws Exception {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
@@ -540,5 +812,42 @@ public class IFlow extends AbstractProcessor {
             }
         }
         return -1;
+    }
+
+    private void checkParam(String param, String name) {
+        if (param == null) {
+            throw new IllegalArgumentException(name + ' ' + param);
+        }
+    }
+
+    private Map<String, String> parseParams(String url) throws Exception {
+        Map<String, String> params = new HashMap<>();
+        String[] keyValuePairs = url.split("&");
+
+        for (String pair : keyValuePairs) {
+            String[] keyValuePair = pair.split("=");
+            if (keyValuePair.length > 0) params.put(keyValuePair[0].trim(), keyValuePair[1].trim());
+        }
+        return params;
+    }
+
+    private FlowFile convertFlowFile(FlowFile flowFile) throws Exception{
+        flowFile = session.write(flowFile, new StreamCallback(){
+
+            @Override
+            public void process(InputStream is, OutputStream os) throws IOException{
+                byte[] content = stream2byteArray(is);
+                trace("Len " + content.length);
+                String json = xml2Json(new String(content));
+                if (json) {
+                    os.write(json.getBytes());
+                    os.flush();
+                } else {
+                    throw new Exception('Failed xml convertation!')
+                }
+            }
+
+        })
+        return flowFile
     }
 }
