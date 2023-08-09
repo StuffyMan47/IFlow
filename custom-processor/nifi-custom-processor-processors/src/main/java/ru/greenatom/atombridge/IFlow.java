@@ -34,6 +34,8 @@ import org.apache.nifi.processor.Relationship;
 import org.apache.nifi.processor.util.StandardValidators;
 import org.apache.nifi.distributed.cache.client.DistributedMapCacheClient;
 
+import java.io.InputStream;
+import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -75,6 +77,8 @@ import javax.xml.validation.*;
 
 import org.codehaus.groovy.ant.Groovy;
 import org.codehaus.groovy.runtime.DefaultGroovyMethods;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import org.xml.sax.SAXException;
 
 import java.util.regex.Matcher;
@@ -224,10 +228,186 @@ public class IFlow extends AbstractProcessor {
             trace("start parsing json iFlow");
 
             //todo ret всегда null перепроверить
-            var iflow = new groovy.json.JsonSlurper().parseText(ret);
-
-            ArrayList<Object> targets = iflow.targets as ArrayList;
+//            var iflow = new groovy.json.JsonSlurper().parseText(ret);
+            JSONObject iflow = new JSONObject(ret);
+            JSONArray targets = iflow.getJSONArray("targets");
             trace("full list of defined target systems" + targets);
+
+            boolean sync = Boolean.parseBoolean(iflow.getString("sync"));
+            int numOfTargets = targets.length();
+
+            if (flowFile.getAttribute("xform.stage") != null & flowFile.getAttribute("target.id") != null & flowFile.getAttribute("xform.path") != null) {
+                try {
+                    trace1("+loopback " + flowFile.getAttribute("xform.stage"));
+                    String targetId = flowFile.getAttribute("target.id");
+                    int targetIndx = findTarget(targets, targetId);
+                    if (targetIndx < 0) throw new IllegalArgumentException('Target not found')
+                    def target = targets.get(targetIndx);
+
+                    ArrayList xforms = target.transformations as ArrayList
+
+                    int xformPath = Integer.parseInt(flowFile.getAttribute('xform.path'));
+
+                    if (xformPath > -1 & xformPath < xforms.size()) {
+                        if (target.output ==" 'JSON'") flowFile.putAttribute("target.output", "JSON");
+                        def xform = xforms.get(xformPath);
+                        def result = processXform(flowFile, xform, targetId);
+                        if (result == null) {
+                            trace("-ff");
+                            session.remove(flowFile);
+                        } else {
+                            List urlList = target.targetPath instanceof List ? target.targetPath : [target.targetPath];
+                            transferResult(result, sync, urlList, target);
+                        }
+                    } else {
+                        throw new Exception("Incorrect transformation path " + xformPath);
+                    }
+                } catch (Exception ex1) {
+                    trace("!!!!!!!Exception: ${ex1.toString()}");
+                    StringBuilder exMsgBldr = new StringBuilder();
+                    exMsgBldr.append("Exception '${ex1.toString()}' occurs");
+                    exMsgBldr.append(" while processing FlowFile '${flowFile.getAttribute('filename')}'");
+
+                    exMsgBldr.append(" in '${flowFile.getAttribute('business.process.name')}' scenario");
+                    exMsgBldr.append(" at '${flowFile.getAttribute('target.id')}' target");
+                    exMsgBldr.append(" at '${flowFile.getAttribute('xform.path')}' path");
+                    exMsgBldr.append(" at ${flowFile.getAttribute('xform.stage')} stage");
+
+                    session.putAttribute(flowFile, "error.msg", ex1.toString());
+
+                    log.log(org.apache.nifi.logging.LogLevel.ERROR, exMsgBldr.toString())
+                    log.log(org.apache.nifi.logging.LogLevel.ERROR, traceOut);
+
+                    session.putAttribute(flowFile, 'error.msg', ex1.toString())
+
+                    //failFlowFiles << flowFileCopy
+                    session.transfer(flowFile, REL_FAILURE)
+                    return
+                }
+            } else {
+                //Validate against xsd schema
+                flowFile."xform.stage" == -1;
+                String schemaContent = null;
+                boolean isFailedSchemaExtraction = false;
+                try {
+                    schemaContent = xsdCacheMap.get(iflow.validate,
+                            new Serializer<String>(){
+
+                                @Override
+                                public void serialize(final String value, final OutputStream out) throws SerializationException, IOException {
+                                    out.write(value.getBytes(StandardCharsets.UTF_8))
+                                }
+
+                            },
+                            new Deserializer<String>(){
+
+                                @Override
+                                public String deserialize(final byte[] value) throws DeserializationException, IOException {
+                                    if (value == null) {
+                                        return null
+                                    }
+                                    return new String(value, StandardCharsets.UTF_8)
+
+                                }});
+                    if (!schemaContent) {
+                        throw new IOException("Schema with name ${iflow.validate} not found")
+                    }
+                } catch (Exception e) {
+                    String msg = 'Failed schema extraction! ' + e;
+                    log.error msg;
+                    flowFile.'error.msg' = msg;
+                    session.transfer(flowFile, REL_FAILURE);
+                    isFailedSchemaExtraction = true;
+                }
+                if (isFailedSchemaExtraction) return
+
+                        InputStream fis = null;
+                boolean isFailedValidation = false;
+                try {
+                    fis = session.read(flowFile)
+                    Source xmlFile = new StreamSource(fis);
+                    javax.xml.validation.SchemaFactory schemaFactory = SchemaFactory
+                            .newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+                    javax.xml.validation.Schema schema = schemaFactory.newSchema(new StreamSource(new StringReader(schemaContent)))
+                    javax.xml.validation.Validator validator = schema.newValidator();
+                    validator.validate(xmlFile);
+                } catch (Exception e) {
+                    String msg = 'Failed xml validation! ' + e;
+                    log.error msg;
+                    flowFile.'error.msg' = msg;
+                    isFailedValidation = true;
+                    session.transfer(flowFile, Failure);
+                } finally {
+                    fis.close();
+                }
+                if (isFailedValidation) return
+
+                        ProvenanceReporter reporter = session.getProvenanceReporter();
+
+                targets.eachWithIndex { it, flowIndex ->
+                        ArrayList xforms = it.transformations as ArrayList
+                    //Make a copy of incoming flow file for each target system
+                    //Or use the incoming flowfile for last target
+                    //FlowFile file = flowIndex < numOfTargets - 1 & numOfTargets > 1 ? session.clone(flowFile) : flowFile
+                    FlowFile file = null
+                    if(flowIndex < numOfTargets - 1 & numOfTargets > 1){
+                        file = session.clone(flowFile);
+                        reporter.clone(flowFile, file);
+                    } else{
+                        file = flowFile;
+                    }
+                    session.putAttribute(file, "Receiver", it.id);
+                    int xformPath = -1;
+
+                    if (it.syncValidation == "true") {
+                        syncResponse(file);
+                    }
+
+                    if (it.output == 'JSON') {
+                        session.putAttribute(file, "target.output", "JSON")
+                    }
+
+                    FlowFile f = null;
+
+                    for (ArrayList xform : xforms) {
+                        try {
+                            xformPath++
+                            session.putAttribute(file, "xform.path", String.valueOf(xformPath));
+                            f = xformPath < xforms.size() - 1 & xforms.size() > 1 ? session.clone(file) : file;
+
+                            def result = processXform(f, xform, it.id);
+                            reporter.modifyContent(f);
+                            if (result == null) {
+                                session.remove(f);
+                                return;
+                            } else {
+                                List urlList = it.targetPath instanceof List ? it.targetPath : [it.targetPath];
+                                transferResult(result, sync, urlList, it);
+                            }
+                        } catch (Exception ex1) {
+                            trace("!!!!!!!Exception: ${ex1.toString()}");
+                            StringBuilder exMsgBldr = new StringBuilder();
+                            exMsgBldr.append("Exception '${ex1.toString()}' occurs");
+                            exMsgBldr.append(" while processing FlowFile '${f.getAttribute('filename')}'");
+
+                            exMsgBldr.append(" in '${f.getAttribute('business.process.name')}' scenario");
+                            exMsgBldr.append(" at '${it.id}' target");
+                            exMsgBldr.append(" at ${f.getAttribute('xform.path')} path");
+                            exMsgBldr.append(" at ${f.getAttribute('xform.stage')} stage");
+
+                            logger.log(org.apache.nifi.logging.LogLevel.ERROR, exMsgBldr.toString());
+                            logger.log(org.apache.nifi.logging.LogLevel.ERROR, traceOut);
+
+                            session.putAttribute(f, "error.msg", ex1.toString());
+
+                            //failFlowFiles << flowFileCopy
+
+                            session.transfer(f, Failure);
+                        }
+                    }
+                }
+            }
+
 
         } catch (Exception ex) {
 
@@ -241,7 +421,7 @@ public class IFlow extends AbstractProcessor {
     }
 
     /**Не до конца понимает, что должно вернуть**/
-    public ControllerService getServiceController (final String name, final ProcessContext context){
+    private ControllerService getServiceController (final String name, final ProcessContext context){
         trace(String.format("get service controller: %s", name));
         var lookup = context.getControllerServiceLookup();
         String serviceId = lookup.getControllerServiceIdentifiers(ControllerService.class)
@@ -252,15 +432,15 @@ public class IFlow extends AbstractProcessor {
         return lookup.getControllerService(serviceId);
     }
 
-    public void trace(String message) {
+    private void trace(String message) {
         traceOut += String.format("\r\n+++++++ %s +++++++:%d",traceCount, message);
     }
 
-    public void trace1(String message) {
+    private void trace1(String message) {
         traceOut1 += String.format("\r\n+++++++ %s +++++++:%d",traceCount1, message);
     }
 
-    public String getResponse(String protocol, String code) {
+    private String getResponse(String protocol, String code) {
         if (protocol.equals("XI")) {
             switch (code) {
                 case "200":
@@ -270,5 +450,16 @@ public class IFlow extends AbstractProcessor {
             return code;
         }
         return null;
+    }
+
+    private int findTarget(JSONArray targets, String id) {
+        JSONObject target;
+        for (int i = 0; i < targets.length(); i++) {
+            target = targets.getJSONObject(i);
+            if(target.get("id") == id) {
+                return i;
+            }
+        }
+        return -1;
     }
 }
