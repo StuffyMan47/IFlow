@@ -262,11 +262,10 @@ public class IFlow extends AbstractProcessor {
 
                     if (xformPath > -1 & xformPath < xforms.length()) {
                         if (target.get("output") =="JSON") {
-                            flowFile.putAttribute("target.output", "JSON");
                             session.putAttribute(flowFile, "target.output", "JSON");
                         }
-                        def xform = xforms.get(xformPath);
-                        def result = processXform(flowFile, xform, targetId);
+                        var xform = xforms.get(xformPath);
+                        FlowFile result = processXform(context, session, flowFile, xform, targetId);
                         if (result == null) {
                             trace("-ff");
                             session.remove(flowFile);
@@ -280,28 +279,28 @@ public class IFlow extends AbstractProcessor {
                 } catch (Exception ex1) {
                     trace("!!!!!!!Exception: ${ex1.toString()}");
                     StringBuilder exMsgBldr = new StringBuilder();
-                    exMsgBldr.append("Exception '${ex1.toString()}' occurs");
-                    exMsgBldr.append(" while processing FlowFile '${flowFile.getAttribute('filename')}'");
+                    exMsgBldr.append("Exception" + ex1 + "occurs");
+                    exMsgBldr.append(" while processing FlowFile" + flowFile.getAttribute("filename"));
 
-                    exMsgBldr.append(" in '${flowFile.getAttribute('business.process.name')}' scenario");
-                    exMsgBldr.append(" at '${flowFile.getAttribute('target.id')}' target");
-                    exMsgBldr.append(" at '${flowFile.getAttribute('xform.path')}' path");
-                    exMsgBldr.append(" at ${flowFile.getAttribute('xform.stage')} stage");
+                    exMsgBldr.append(" in " + flowFile.getAttribute("business.process.name") + "scenario");
+                    exMsgBldr.append(" at " + flowFile.getAttribute("target.id") + "target");
+                    exMsgBldr.append(" at " + flowFile.getAttribute("xform.path") + "path");
+                    exMsgBldr.append(" at " + flowFile.getAttribute("xform.stage") +  "stage");
 
                     session.putAttribute(flowFile, "error.msg", ex1.toString());
 
-                    log.log(org.apache.nifi.logging.LogLevel.ERROR, exMsgBldr.toString())
-                    log.log(org.apache.nifi.logging.LogLevel.ERROR, traceOut);
+                    logger.log(org.apache.nifi.logging.LogLevel.ERROR, exMsgBldr.toString());
+                    logger.log(org.apache.nifi.logging.LogLevel.ERROR, traceOut);
 
-                    session.putAttribute(flowFile, 'error.msg', ex1.toString())
+                    session.putAttribute(flowFile, "error.msg", ex1.toString());
 
                     //failFlowFiles << flowFileCopy
-                    session.transfer(flowFile, REL_FAILURE)
-                    return
+                    session.transfer(flowFile, Failure);
+                    return;
                 }
             } else {
                 //Validate against xsd schema
-                flowFile."xform.stage" == -1;
+                session.putAttribute(flowFile, "xform.stage", "-1");
                 String schemaContent = null;
                 boolean isFailedSchemaExtraction = false;
                 try {
@@ -319,27 +318,27 @@ public class IFlow extends AbstractProcessor {
                                 @Override
                                 public String deserialize(final byte[] value) throws DeserializationException, IOException {
                                     if (value == null) {
-                                        return null
+                                        return null;
                                     }
-                                    return new String(value, StandardCharsets.UTF_8)
+                                    return new String(value, StandardCharsets.UTF_8);
 
                                 }});
-                    if (!schemaContent) {
-                        throw new IOException("Schema with name ${iflow.validate} not found")
+                    if (schemaContent == null) {
+                        throw new IOException("Schema with name ${iflow.validate} not found");
                     }
                 } catch (Exception e) {
-                    String msg = 'Failed schema extraction! ' + e;
-                    log.error msg;
-                    flowFile.'error.msg' = msg;
-                    session.transfer(flowFile, REL_FAILURE);
+                    //todo Мб вынести в отдельный метод?
+                    String msg = "Failed schema extraction! " + e;
+                    setError(session, msg, flowFile);
                     isFailedSchemaExtraction = true;
                 }
-                if (isFailedSchemaExtraction) return
-
-                        InputStream fis = null;
+                if (isFailedSchemaExtraction) {
+                    return;
+                }
+                InputStream fis = null;
                 boolean isFailedValidation = false;
                 try {
-                    fis = session.read(flowFile)
+                    fis = session.read(flowFile);
                     Source xmlFile = new StreamSource(fis);
                     javax.xml.validation.SchemaFactory schemaFactory = SchemaFactory
                             .newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
@@ -347,24 +346,25 @@ public class IFlow extends AbstractProcessor {
                     javax.xml.validation.Validator validator = schema.newValidator();
                     validator.validate(xmlFile);
                 } catch (Exception e) {
-                    String msg = 'Failed xml validation! ' + e;
-                    log.error msg;
-                    flowFile.'error.msg' = msg;
+                    String msg = "Failed xml validation! " + e;
+                    logger.error(msg);
+                    setError(session, msg, flowFile);
                     isFailedValidation = true;
-                    session.transfer(flowFile, Failure);
                 } finally {
                     fis.close();
                 }
-                if (isFailedValidation) return
+                if (isFailedValidation) {
+                    return;
+                }
 
-                        ProvenanceReporter reporter = session.getProvenanceReporter();
+                ProvenanceReporter reporter = session.getProvenanceReporter();
 
                 targets.eachWithIndex { it, flowIndex ->
                         ArrayList xforms = it.transformations as ArrayList
                     //Make a copy of incoming flow file for each target system
                     //Or use the incoming flowfile for last target
                     //FlowFile file = flowIndex < numOfTargets - 1 & numOfTargets > 1 ? session.clone(flowFile) : flowFile
-                    FlowFile file = null
+                    FlowFile file = null;
                     if(flowIndex < numOfTargets - 1 & numOfTargets > 1){
                         file = session.clone(flowFile);
                         reporter.clone(flowFile, file);
@@ -378,7 +378,7 @@ public class IFlow extends AbstractProcessor {
                         syncResponse(file);
                     }
 
-                    if (it.output == 'JSON') {
+                    if (it.output == "JSON") {
                         session.putAttribute(file, "target.output", "JSON")
                     }
 
@@ -386,7 +386,7 @@ public class IFlow extends AbstractProcessor {
 
                     for (ArrayList xform : xforms) {
                         try {
-                            xformPath++
+                            xformPath++;
                             session.putAttribute(file, "xform.path", String.valueOf(xformPath));
                             f = xformPath < xforms.size() - 1 & xforms.size() > 1 ? session.clone(file) : file;
 
@@ -436,7 +436,13 @@ public class IFlow extends AbstractProcessor {
     }
 
     //Returns processed FlowFile or ArrayList of processed FlowFiles
-    private FlowFile processXform(FlowFile flowFile, ArrayList xforms, String targetId) throws Exception{
+    private FlowFile processXform(
+            final ProcessContext context,
+            final ProcessSession session,
+            FlowFile flowFile,
+            JSONArray xforms,
+            String targetId
+    ) throws Exception{
         boolean isFlowFileSuppressed = false;
         int prevStageIndx = -1;
 
@@ -461,18 +467,20 @@ public class IFlow extends AbstractProcessor {
 
         session.getProvenanceReporter().modifyContent(flowFile, "wsrhsrh");
 
-        for (String xform : xforms) {
+        for (int i = 0; i < xforms.length(); i++) {
+            JSONObject xform = xforms.getJSONObject(i);
             //Stop processing flow file if it is suppressed at routing stage
             if (isFlowFileSuppressed) {
                 return null;
             }
             currStageIndx++;
-            session.putAttribute(flowFile, "xform.stage", currStageIndx);
+            session.putAttribute(flowFile, "xform.stage", String.valueOf(currStageIndx));
 
             //Start process right after the previous stage
             if (currStageIndx > prevStageIndx) {
                 trace1("Stage " + String.valueOf(currStageIndx));
-                String[] nameParamsPair = xform.split("://");
+                //TODO при дебаге проверить получившийся JSON
+                String[] nameParamsPair = xform.toString().split("://");
                 Map<String, String> params = null;
                 if (nameParamsPair.length > 1) {
                     //Params must follow after ? symbol
@@ -481,23 +489,26 @@ public class IFlow extends AbstractProcessor {
                 for (Map.Entry<String, String> paramEntry : params.entrySet()) {
                     trace("Key " + paramEntry.getKey() + " val " + paramEntry.getValue());
                 }
-                String name = nameParamsPair.length > 1 ? nameParamsPair[0] : xform;
+                //TODO временно оставил toString()
+                String name = nameParamsPair.length > 1 ? nameParamsPair[0] : xform.toString();
                 trace("processing " + String.valueOf(currStageIndx) + " stage");
 
+                PropertyValue propValue;
+                String param;
                 switch (name) {
                     case("SyncResponse"):
                         syncResponse(flowFile);
                         break;
                     case("RouteOnContent"):
                         //Have to transfer a flow file to the special RouteOnContent processor group
-                        String param = params.get("MatchRequirement");
+                        param = params.get("MatchRequirement");
 //                        if (!param) throw new IllegalArgumentException(name + ' ' + param);
                         checkParam(param, name);
                         session.putAttribute(flowFile, "content.match.strategy", param);
                         param = params.get("RouteCondition");
 //                        if (!param) throw new IllegalArgumentException(name + ' ' + param);
                         checkParam(param, name);
-                        PropertyValue propValue = context.newPropertyValue(param);
+                        propValue = context.newPropertyValue(param);
                         String s = propValue.evaluateAttributeExpressions(flowFile).getValue();
                         session.putAttribute(flowFile, "route.on.content.condition", s);
                         param = params.get("Result");
@@ -511,19 +522,19 @@ public class IFlow extends AbstractProcessor {
                         //We have to support the Nifi EL in attributes
                         //So create temp hidden property to provide EL capabilities
                         for (Map.Entry<String, String> entry : params.entrySet()) {
-                            PropertyValue propValue = context.newPropertyValue(entry.getValue());
+                            propValue = context.newPropertyValue(entry.getValue());
                             String attrValue = propValue.evaluateAttributeExpressions(flowFile).getValue();
                             flowFile = session.putAttribute(flowFile, entry.getKey(), attrValue);
                         }
                         break;
                     case("RouteOnAttribute"):
-                        String param = params.get("RoutingStrategy");
+                        param = params.get("RoutingStrategy");
 //                        if (!param) throw new IllegalArgumentException(name + ' ' + param);
                         checkParam(param, name);
                         param = params.get("Condition");
 //                        if (!param) throw new IllegalArgumentException(name + ' ' + param);
                         checkParam(param, name);
-                        PropertyValue propValue = context.newPropertyValue(param);
+                        propValue = context.newPropertyValue(param);
                         String res = propValue.evaluateAttributeExpressions(flowFile).getValue();
                         if (res == "false") {
                             isFlowFileSuppressed = true;
@@ -537,12 +548,11 @@ public class IFlow extends AbstractProcessor {
                         String replacementStrategy = params.get("ReplacementStrategy");
 //                        if (!replacementStrategy) throw new IllegalArgumentException(name + ' ' + param);
                         checkParam(replacementStrategy, name);
-                        flowFile.'replace.text.mode' = replacementStrategy;
                         session.putAttribute(flowFile, "replace.text.mode", replacementStrategy);
                         String searchValue = params.get("SearchValue");
 //                        if (!searchValue) throw new IllegalArgumentException(name + ' ' + param);
                         checkParam(searchValue, name);
-                        PropertyValue propValue = context.newPropertyValue(searchValue);
+                        propValue = context.newPropertyValue(searchValue);
                         searchValue = propValue.evaluateAttributeExpressions(flowFile).getValue();
                         session.putAttribute(flowFile, "replace.text.search.value", searchValue);
                         String replacementValue = params.get("ReplacementValue");
@@ -556,7 +566,7 @@ public class IFlow extends AbstractProcessor {
                                 replacementValue, "EntireText", StandardCharsets.UTF_8, fileSize);
                         break;
                     case("EvaluateXQuery"):
-                        String param = params.get("Destination");
+                        param = params.get("Destination");
                         if (!param.equals("flowfile-attribute")) {
                             throw new IllegalArgumentException(name + ' ' + param);
                         }
@@ -617,61 +627,62 @@ public class IFlow extends AbstractProcessor {
                         }
                         break;
                     case("ApplyXslt"):
-                        final String param = params.get("Name");
-                        checkParam(param, name);
+                        final String parameter = params.get("Name");
+                        checkParam(parameter, name);
 //                        if (!param) throw new IllegalArgumentException(name + ' ' + param);
                         flowFile = session.write(flowFile, new StreamCallback(){
 
                             @Override
-                            void process(InputStream is, OutputStream os) throws IOException{
-                                applyXslt(is, os, param);
+                            public void process(InputStream is, OutputStream os) throws IOException{
+                                applyXslt(is, os, parameter);
                                 os.flush();
                             }
 
                         });
                         break;
                     case("DuplicateFlowFile"):
-                        String param = params.get("Number");
+                        param = params.get("Number");
                         checkParam(param, name);
 //                        if (param == null) {
 //                            throw new IllegalArgumentException(name + ' ' + param);
 //                        }
-                        PropertyValue propValue = context.newPropertyValue(param);
+                        propValue = context.newPropertyValue(param);
                         param = propValue.evaluateAttributeExpressions(flowFile).getValue();
                         int numOfCopies = Integer.parseInt(param);
-                        ArrayList<FlowFile> res = []
+                        //res -> result
+                        ArrayList<FlowFile> result = new ArrayList<>();
 
-                        session.putAttribute(flowFile, "copy.index", 0);
+                        session.putAttribute(flowFile, "copy.index", "0");
 
-                        if (currStageIndx == xforms.size() - 1) {
+                        if (currStageIndx == xforms.length() - 1) {
                             flowFile = session.removeAttribute(f, "xform.group");
                         }
                         String ffid = flowFile.getAttribute("uuid");
-                        for (int i = 0; i < numOfCopies; i++) {
+                        for (int j = 0; j < numOfCopies; j++) {
                             FlowFile f = session.clone(flowFile);
-                            session.putAttribute(flowFile, "copy.index", String.valueOf(i + 1));
+                            session.putAttribute(flowFile, "copy.index", String.valueOf(j + 1));
                             graylogNotifyStart(f, ffid);
                             FlowFile ff = null;
-                            if (currStageIndx < xforms.size() - 1) {
-                                ff = processXform(f, xforms, targetId);
+                            if (currStageIndx < xforms.length() - 1) {
+                                ff = processXform(context, session, f, xforms, targetId);
                             }
                             if (ff == null) {
                                 session.remove(f);
                             } else {
-                                res.add(ff);
+                                result.add(ff);
                             }
                         }
-                        if (currStageIndx < xforms.size() - 1) {
-                            ff = processXform(flowFile, xforms, targetId);
+                        if (currStageIndx < xforms.length() - 1) {
+                            FlowFile ff = processXform(context, session, flowFile, xforms, targetId);
                             if (ff == null) {
                                 session.remove(flowFile);
                             } else {
-                                res.add(ff);
+                                result.add(ff);
                             }
                         } else {
-                            res.add(flowFile);
+                            result.add(flowFile);
                         }
-                        return res
+                        return result;
                     default:
                         for (Map.Entry<String, String> entry : params.entrySet()) {
                             flowFile = session.putAttribute(flowFile,
@@ -686,8 +697,8 @@ public class IFlow extends AbstractProcessor {
                 break;
             }
         }
-        trace("Stage is " + String.valueOf(currStageIndx) + " size " + String.valueOf(xforms.size()));
-        if (currStageIndx == xforms.size() - 1) {
+        trace("Stage is " + String.valueOf(currStageIndx) + " size " + String.valueOf(xforms.length()));
+        if (currStageIndx == xforms.length() - 1) {
             if (isPropagated) {
                 if (!flowFile.getAttribute("target.output").equals("JSON")) {
                     //Red pill for last xform to transfer flow file to the upload group
@@ -695,7 +706,7 @@ public class IFlow extends AbstractProcessor {
                 }
             } else {
                 if (flowFile.getAttribute("target.output").equals("JSON")) {
-                    flowFile = convertFlowFile(flowFile);
+                    flowFile = convertFlowFile(session, flowFile);
                 }
                 //Move right to upload group
                 flowFile = session.removeAttribute(flowFile, "xform.group");
@@ -808,25 +819,6 @@ public class IFlow extends AbstractProcessor {
         return json;
     }
 
-    //доделать
-    FlowFile convertFlowFile(FlowFile flowFile) throws Exception{
-        flowFile = session.write(flowFile, new StreamCallback(){
-
-            @Override
-            public void process(InputStream is, OutputStream os) throws IOException{
-                byte[] content = stream2byteArray(is);
-                trace "Len" + content.length
-                String json = xml2Json(new String(content));
-                if (!json.isEmpty()) {
-                    os.write(json.getBytes());
-                    os.flush();
-                } else {
-                    throw new Exception("Failed xml convertation!");
-                }
-            }
-        });
-        return flowFile;
-    }
 
 
     public void trace(String message) {
@@ -877,7 +869,7 @@ public class IFlow extends AbstractProcessor {
         return params;
     }
 
-    private FlowFile convertFlowFile(FlowFile flowFile) throws Exception{
+    private FlowFile convertFlowFile(final ProcessSession session, FlowFile flowFile) throws Exception{
         flowFile = session.write(flowFile, new StreamCallback(){
 
             @Override
@@ -885,15 +877,29 @@ public class IFlow extends AbstractProcessor {
                 byte[] content = stream2byteArray(is);
                 trace("Len " + content.length);
                 String json = xml2Json(new String(content));
-                if (json) {
+                if (json != null) {
                     os.write(json.getBytes());
                     os.flush();
                 } else {
-                    throw new Exception('Failed xml convertation!')
+                    try {
+                        throw new Exception("Failed xml convertation!");
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
                 }
             }
 
-        })
-        return flowFile
+        });
+        return flowFile;
     }
+
+    private void setError(
+            final ProcessSession session,
+            String msg, FlowFile flowFile
+    ) {
+        logger.error(msg);
+        session.putAttribute(flowFile, "error.msg", msg);
+        session.transfer(flowFile, Failure);
+    }
+
 }
