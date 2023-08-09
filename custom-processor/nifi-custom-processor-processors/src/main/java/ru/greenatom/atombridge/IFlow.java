@@ -462,7 +462,8 @@ public class IFlow extends AbstractProcessor {
 //        }
 //        return DefaultGroovyMethods.collect{node -> node.textContent};
 //
-//    }
+    }
+
     public List<String> evaluateXPath(InputStream inputStream, String xpathQuery) throws Exception {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         DocumentBuilder builder = factory.newDocumentBuilder();
