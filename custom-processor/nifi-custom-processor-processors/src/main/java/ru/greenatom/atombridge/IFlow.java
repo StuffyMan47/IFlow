@@ -16,6 +16,7 @@
  */
 package ru.greenatom.atombridge;
 
+import groovy.util.XmlParser;
 import org.apache.nifi.annotation.behavior.*;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.controller.ControllerService;
@@ -73,6 +74,7 @@ import javax.xml.validation.*;
 
 import org.codehaus.groovy.ant.Groovy;
 import org.codehaus.groovy.runtime.DefaultGroovyMethods;
+import org.json.XML;
 import org.w3c.dom.Element;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -716,8 +718,7 @@ public class IFlow extends AbstractProcessor {
         return lookup.getControllerService(serviceId);
     }
 
-//    private void trace(String message) {
-//    //старая версия листа
+    //старая версия листа
 //    List<Object> evaluateXPath(InputStream inputStream, String xpathQuery){
 //        Element records = null;
 //        try {
@@ -733,8 +734,7 @@ public class IFlow extends AbstractProcessor {
 //            throw new RuntimeException(e);
 //        }
 //        return DefaultGroovyMethods.collect{node -> node.textContent};
-//
-//    }
+
 
     public List<String> evaluateXPath(InputStream inputStream, String xpathQuery) throws Exception {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
@@ -772,16 +772,62 @@ public class IFlow extends AbstractProcessor {
         return res;
     }
 
-//    def stream2string(InputStream inputStream) {
-//        ByteArrayOutputStream result = new ByteArrayOutputStream()
-//        byte[] buffer = new byte[1024]
-//        for (int length; (length = inputStream.read(buffer)) != -1; ) {
-//            result.write(buffer, 0, length)
-//        }
-//        // StandardCharsets.UTF_8.name() > JDK 7
-//        inputStream.reset()
-//        return result.toString('UTF-8')
-//    }
+    //Вроде норм, но надо будет потестить
+    private String stream2string (InputStream inputStream) throws IOException {
+        ByteArrayOutputStream result = new ByteArrayOutputStream();
+        byte[] buffer = new byte[1024];
+        for (int length; (length = inputStream.read(buffer)) != -1; ) {
+            result.write(buffer, 0, length);
+        }
+        try {
+            inputStream.reset();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        try {
+            return result.toString("UTF-8");
+        } catch (UnsupportedEncodingException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    //Вроде норм, но надо будет потестить
+    private byte[] stream2byteArray (InputStream inputStream) throws IOException {
+        ByteArrayOutputStream result = new ByteArrayOutputStream();
+        byte[] buffer = new byte[1024];
+        for (int length; (length = inputStream.read(buffer)) != -1; ) {
+            result.write(buffer, 0, length);
+        }
+        return result.toByteArray();
+    }
+
+    //Сделано не как в груви, но должно работать
+    private String xml2Json(String xml){
+        JSONObject jsonObj = XML.toJSONObject(xml);
+        String json = jsonObj.toString();
+        return json;
+    }
+
+    //доделать
+    FlowFile convertFlowFile(FlowFile flowFile) throws Exception{
+        flowFile = session.write(flowFile, new StreamCallback(){
+
+            @Override
+            public void process(InputStream is, OutputStream os) throws IOException{
+                byte[] content = stream2byteArray(is);
+                trace "Len" + content.length
+                String json = xml2Json(new String(content));
+                if (!json.isEmpty()) {
+                    os.write(json.getBytes());
+                    os.flush();
+                } else {
+                    throw new Exception("Failed xml convertation!");
+                }
+            }
+        });
+        return flowFile;
+    }
+
 
     public void trace(String message) {
         traceOut += String.format("\r\n+++++++ %s +++++++:%d",traceCount, message);
