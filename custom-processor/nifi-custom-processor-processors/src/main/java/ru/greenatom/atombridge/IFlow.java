@@ -892,6 +892,38 @@ public class IFlow extends AbstractProcessor {
         return flowFile;
     }
 
+    //todo Перепроверить правильно ли config.response -> config.getString("response") и т.д
+    private FlowFile postprocessXform(
+            final ProcessContext context,
+            final ProcessSession session,
+            FlowFile flowFile,
+            boolean syncStatus,
+            JSONObject config) throws Exception {
+        if (syncStatus) {
+            trace("flowfile marked as SYNC, response flow name is: ${config.response}");
+            session.putAttribute(flowFile, "iflow.status.code", "");
+            session.putAttribute(flowFile, "business.process.name", config.getString("response"));
+            //flowFileCopy.flow_name = it.response
+        } //else {
+        //flowFileCopy.'iflow.status.code' = getResponse(iflow.input, '200')
+        //}
+        trace("Before potential problem");
+        if (flowFile == null) {
+            trace("A eto null");
+        }
+        session.putAttribute(flowFile, "iflow.input", config.getString("input"));
+        session.putAttribute(flowFile, "iflow.sync", config.getString("sync"));
+        session.putAttribute(flowFile, "processGroupId", "2fde38c3-b6b5-1fee-0c7c-7c06e1792e1a");
+
+        trace("Prost");
+        if (context.getProperty(config.getString("id")).getValue() == null) {
+            logger.error("Property for" + config.getString("id") + "not found, add it to processor parameters!");
+            session.putAttribute(flowFile, "target_system", config.getString("id"));
+        }
+
+        return flowFile;
+    }
+
     private void graylogNotify(FlowFile flowFile, String xformEntity) throws Exception{
         String sender = flowFile.getAttribute("http.query.param.senderService");
         if (sender == null) {
