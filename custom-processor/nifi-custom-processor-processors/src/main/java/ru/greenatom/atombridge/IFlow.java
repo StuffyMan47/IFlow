@@ -53,6 +53,9 @@ import org.apache.nifi.serialization.record.Record;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerException;
+import javax.xml.transform.TransformerFactory;
 import javax.xml.transform.stream.StreamResult;
 import javax.xml.transform.stream.StreamSource;
 
@@ -109,7 +112,7 @@ import java.util.List;
 @WritesAttributes({@WritesAttribute(attribute="", description="")})
 public class IFlow extends AbstractProcessor {
 
-    private final Object xslRemoveEnv = null;
+    private Transformer xslRemoveEnv = null;
     private String traceOut;
     private final int traceCount = 0;
     private String traceOut1;
@@ -199,6 +202,9 @@ public class IFlow extends AbstractProcessor {
         } catch (ParserConfigurationException e) {
             throw new RuntimeException(e);
         }
+
+        final DistributedMapCacheClient cache = context.getProperty(PROP_DISTRIBUTED_CACHE_SERVICE).asControllerService(DistributedMapCacheClient.class);
+
 
         /** Посмотреть откуда берётся IflowMapCacheLookupClient и т.д **/
         //todo Пофиксиить
@@ -432,7 +438,6 @@ public class IFlow extends AbstractProcessor {
 
         }
 
-        final DistributedMapCacheClient cache = context.getProperty(PROP_DISTRIBUTED_CACHE_SERVICE).asControllerService(DistributedMapCacheClient.class);
 
         session.transfer(flowFile, Load);
 
@@ -893,6 +898,58 @@ public class IFlow extends AbstractProcessor {
         return flowFile;
     }
 
+    void applyXslt(InputStream flowFileContent, OutputStream os, String transformName) throws IOException, IllegalArgumentException, TransformerException {
+        if (transformName == null) {
+            throw new IOException("XSLT with the name ${transformName} not found");
+        }
+        trace("apply xslt transform: ${transformName}");
+
+        String xslt = xsltCacheMap.get(transformName,
+                new Serializer<String>(){
+
+                    @Override
+                    public void serialize(final String value, final OutputStream out) throws SerializationException, IOException {
+                        out.write(value.getBytes(StandardCharsets.UTF_8));
+                    }
+
+                },
+                new Deserializer<String>(){
+
+                    @Override
+                    public String deserialize(final byte[] value) throws DeserializationException, IOException {
+                        if (value == null) {
+                            return null;
+                        }
+                        return new String(value, StandardCharsets.UTF_8);
+                    }
+
+                });
+
+        if (xslt == null) {
+            trace("transfom not found in cache: ${transformName}");
+            logger.error("transfom not found in cache:" + transformName);
+            throw new IOException("XSLT with the name ${transformName} not found");
+        }
+        Transformer transformer;
+        if (transformName == "RemoveEnvelope.xsl") {
+            if (xslRemoveEnv != null) {
+                transformer = xslRemoveEnv;
+            } else {
+                transformer = TransformerFactory.newInstance()
+                        .newTransformer(new StreamSource(new StringReader(xslt)));
+                xslRemoveEnv = transformer;
+            }
+        } else {
+            transformer = javax.xml.transform.TransformerFactory.newInstance()
+                    .newTransformer(new StreamSource(new StringReader(xslt)));
+        }
+        Writer writer = new OutputStreamWriter(os);
+
+        StreamResult strmres =  new StreamResult(writer);
+
+        transformer.transform(new StreamSource(flowFileContent), strmres);
+    }
+
     //todo Должен вернуть либо FlowFile либо их лист но нужно будет продумать этот момент, т.к он зависит от того,
     //todo что вернёт метод, и эта логика по идее должна быть в методе прописана
     private void transferResult(
@@ -1158,7 +1215,7 @@ public class IFlow extends AbstractProcessor {
     }
 
     private void sendGELFMessage(String msg) throws Exception {
-        URL url = new URL ("http://1tesb-s-grl01.gk.rosatom.local:12001/gelf");
+        URL url = new URL (gelfURL);
         HttpURLConnection post = (HttpURLConnection)url.openConnection();
         post.setRequestMethod("POST");
         post.setDoOutput(true);
