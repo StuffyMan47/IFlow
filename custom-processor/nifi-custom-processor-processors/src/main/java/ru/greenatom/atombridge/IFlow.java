@@ -137,6 +137,13 @@ public class IFlow extends AbstractProcessor {
             .identifiesControllerService(DistributedMapCacheClient.class)
             .build();
 
+    public static final PropertyDescriptor PROP_DISTRIBUTED_CACHE_SERVICE = new PropertyDescriptor.Builder()
+            .name("Distributed Cache Service")
+            .description("The Controller Service that is used to get the cached values.")
+            .required(true)
+            .identifiesControllerService(DistributedMapCacheClient.class)
+            .build();
+
     public static final Relationship Load = new Relationship.Builder()
             .name("Load")
             .description("Example relationship")
@@ -283,7 +290,7 @@ public class IFlow extends AbstractProcessor {
                             session.remove(flowFile);
                         } else {
                             List urlList = target.targetPath instanceof List ? target.targetPath : [target.targetPath]
-                            transferResult(result, sync, urlList, target);
+                            transferResult(context, session ,result, sync, urlList, target);
                         }
                     } else {
                         throw new Exception("Incorrect transformation path " + xformPath);
@@ -955,7 +962,7 @@ public class IFlow extends AbstractProcessor {
     private void transferResult(
             final ProcessContext context,
             final ProcessSession session,
-            result,
+            Object result,
             boolean sync,
             List urlList,
             JSONObject config) throws Exception{
@@ -1091,7 +1098,7 @@ public class IFlow extends AbstractProcessor {
         }
 
         //Определение бизнес-процесса
-        String businessProcessName = flowFile.getAttribute("business.process.name")
+        String businessProcessName = flowFile.getAttribute("business.process.name");
         String specUrl = "https://1desb-s-app01.gk.rosatom.local/nifi-docs/components/ru.greenatom.atombridge/af-specification-nar/4.0.0.0/ru.greenatom.af.Specifications/index.html#" +
                 businessProcessName;
 
