@@ -1212,7 +1212,7 @@ public class IFlow extends AbstractProcessor {
     }
 
     private void sendGELFMessage(String msg) throws Exception {
-        URL url = new URL ("http://1tesb-s-grl01.gk.rosatom.local:12001/gelf");
+        URL url = new URL (gelfURL);
         HttpURLConnection post = (HttpURLConnection)url.openConnection();
         post.setRequestMethod("POST");
         post.setDoOutput(true);
