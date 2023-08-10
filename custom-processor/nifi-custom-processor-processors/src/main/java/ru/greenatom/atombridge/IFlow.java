@@ -137,13 +137,6 @@ public class IFlow extends AbstractProcessor {
             .identifiesControllerService(DistributedMapCacheClient.class)
             .build();
 
-    public static final PropertyDescriptor PROP_DISTRIBUTED_CACHE_SERVICE = new PropertyDescriptor.Builder()
-            .name("Distributed Cache Service")
-            .description("The Controller Service that is used to get the cached values.")
-            .required(true)
-            .identifiesControllerService(DistributedMapCacheClient.class)
-            .build();
-
     public static final Relationship Load = new Relationship.Builder()
             .name("Load")
             .description("Example relationship")
@@ -290,7 +283,7 @@ public class IFlow extends AbstractProcessor {
                             session.remove(flowFile);
                         } else {
                             List urlList = target.targetPath instanceof List ? target.targetPath : [target.targetPath]
-                            transferResult(context, session ,result, sync, urlList, target);
+                            transferResult(context, session, result, sync, urlList, target);
                         }
                     } else {
                         throw new Exception("Incorrect transformation path " + xformPath);
@@ -1164,7 +1157,7 @@ public class IFlow extends AbstractProcessor {
         if (receiverLookup != null) {
 //            Map<String, String> coordinate = [key: requestUri]
             coordinate.put("key", requestUri);
-            def value = receiverLookup.lookup(coordinate);
+            var value = receiverLookup.lookup(coordinate);
             if (value.isPresent()) {
                 receiver = value.get();
             }
