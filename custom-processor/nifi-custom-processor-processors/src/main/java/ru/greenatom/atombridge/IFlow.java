@@ -283,7 +283,7 @@ public class IFlow extends AbstractProcessor {
                             session.remove(flowFile);
                         } else {
                             List urlList = target.targetPath instanceof List ? target.targetPath : [target.targetPath]
-                            transferResult(result, sync, urlList, target);
+                            transferResult(context, session, result, sync, urlList, target);
                         }
                     } else {
                         throw new Exception("Incorrect transformation path " + xformPath);
@@ -955,7 +955,7 @@ public class IFlow extends AbstractProcessor {
     private void transferResult(
             final ProcessContext context,
             final ProcessSession session,
-            result,
+            Object result,
             boolean sync,
             List urlList,
             JSONObject config) throws Exception{
@@ -1150,6 +1150,7 @@ public class IFlow extends AbstractProcessor {
             requestUri = flowFile.getAttribute("sap.Interface.value");
         }
 
+        //Todo Разобраться с receiverServiceId.asControllerService опять..
         //Определение получателя
         Map<String, String> coordinate = new LinkedHashMap<>();
         String receiver = "Не определен";
@@ -1157,7 +1158,7 @@ public class IFlow extends AbstractProcessor {
         if (receiverLookup != null) {
 //            Map<String, String> coordinate = [key: requestUri]
             coordinate.put("key", requestUri);
-            def value = receiverLookup.lookup(coordinate);
+            var value = receiverLookup.lookup(coordinate);
             if (value.isPresent()) {
                 receiver = value.get();
             }
