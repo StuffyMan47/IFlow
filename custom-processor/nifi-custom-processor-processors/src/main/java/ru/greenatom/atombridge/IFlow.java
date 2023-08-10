@@ -375,7 +375,7 @@ public class IFlow extends AbstractProcessor {
                     int xformPath = -1;
 
                     if (it.syncValidation == "true") {
-                        syncResponse(file);
+                        syncResponse(session, file);
                     }
 
                     if (it.output == "JSON") {
@@ -497,7 +497,7 @@ public class IFlow extends AbstractProcessor {
                 String param;
                 switch (name) {
                     case("SyncResponse"):
-                        syncResponse(flowFile);
+                        syncResponse(session, flowFile);
                         break;
                     case("RouteOnContent"):
                         //Have to transfer a flow file to the special RouteOnContent processor group
@@ -893,6 +893,84 @@ public class IFlow extends AbstractProcessor {
         return flowFile;
     }
 
+    private FlowFile regexReplaceText(
+            final ProcessSession session,
+            final FlowFile flowFile,
+            final String searchValue,
+            final String replacementValue,
+            final String evaluateMode,
+            final Charset charset,
+            final int maxBufferSize
+    ) throws Exception {
+        final int numCapturingGroups = Pattern.compile(searchValue).matcher("").groupCount();
+        //final AttributeValueDecorator quotedAttributeDecorator = Pattern::quote
+
+        final String searchRegex = searchValue;
+        final Pattern searchPattern = Pattern.compile(searchRegex);
+        final Map<String, String> additionalAttrs = new HashMap<>(numCapturingGroups);
+
+        FlowFile updatedFlowFile;
+        if (evaluateMode.equalsIgnoreCase("EntireText")) {
+            final int flowFileSize = (int) flowFile.getSize();
+            final int bufferSize = Math.min(maxBufferSize, flowFileSize);
+            final byte[] buffer = new byte[bufferSize];
+
+            session.read(flowFile,
+                    new InputStreamCallback() {
+
+                        @Override
+                        public void process(InputStream is) throws IOException {
+                            StreamUtils.fillBuffer(is, buffer, false);
+
+                        }
+                    });
+
+            final String contentString = new String(buffer, 0, flowFileSize, charset);
+            final Matcher matcher = searchPattern.matcher(contentString);
+
+            //final PropertyValue replacementValueProperty = replacementValue
+
+            int matches = 0;
+            final StringBuffer sb = new StringBuffer();
+            while (matcher.find()) {
+                matches++;
+
+                for (int i = 0; i <= matcher.groupCount(); i++) {
+                    additionalAttrs.put("$" + i, matcher.group(i));
+                }
+                String replacementFinal = normalizeReplacementString(replacementValue);
+
+                matcher.appendReplacement(sb, replacementFinal);
+            }
+
+            if (matches > 0) {
+                matcher.appendTail(sb);
+
+                final String updatedValue = sb.toString();
+                updatedFlowFile = session.write(flowFile, new OutputStreamCallback() {
+
+                    @Override
+                    public void process(OutputStream os) throws IOException {
+                        os.write(updatedValue.getBytes(charset));
+
+                    }
+                });
+            } else {
+                return flowFile;
+            }
+        } else throw new Exception("unsupported evaluation mode");
+        return updatedFlowFile;
+    }
+
+    private static String normalizeReplacementString(String replacement) {
+        String replacementFinal = replacement;
+        if (Pattern.compile("(\\$\\D)").matcher(replacement).find()) {
+            replacementFinal = Matcher.quoteReplacement(replacement);
+        }
+        return replacementFinal;
+    }
+
+
     private void setError(
             final ProcessSession session,
             String msg, FlowFile flowFile
@@ -900,6 +978,16 @@ public class IFlow extends AbstractProcessor {
         logger.error(msg);
         session.putAttribute(flowFile, "error.msg", msg);
         session.transfer(flowFile, Failure);
+    }
+
+    private void syncResponse(
+            final ProcessSession session,
+            FlowFile flowFile
+    ) {
+        FlowFile syncResponseFile = session.create(flowFile);
+        session.putAttribute(syncResponseFile, "sync.response", "true");
+        //todo Тут было отношение REL_SUCCESS
+        session.transfer(syncResponseFile, Transform);
     }
 
 }
