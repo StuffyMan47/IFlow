@@ -970,6 +970,22 @@ public class IFlow extends AbstractProcessor {
         return replacementFinal;
     }
 
+    FlowFile replaceText(
+            final ProcessSession session,
+            final FlowFile flowFile,
+            final String type,
+            final String searchValue,
+            final String replacementValue,
+            final String evaluateMode,
+            final Charset charset,
+            final int maxBufferSize
+    ) throws Exception{
+        if (type.equals("RegexReplace")) {
+            return regexReplaceText(session, flowFile, searchValue, replacementValue, evaluateMode, charset, maxBufferSize);
+        } else {
+            throw new Exception("Incorrect replace strategy");
+        }
+    }
 
     private void setError(
             final ProcessSession session,
