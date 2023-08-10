@@ -892,6 +892,65 @@ public class IFlow extends AbstractProcessor {
         return flowFile;
     }
 
+    //todo Должен вернуть либо FlowFile либо их лист но нужно будет продумать этот момент, т.к он зависит от того,
+    //todo что вернёт метод, и эта логика по идее должна быть в методе прописана
+    private void transferResult(
+            final ProcessContext context,
+            final ProcessSession session,
+            result,
+            boolean sync,
+            List urlList,
+            JSONObject config) throws Exception{
+        int urlListSize = urlList.size();
+        trace("Medved");
+
+        if (result == null) {
+            trace("A result to null");
+        }
+
+        if (result instanceof FlowFile) {
+            trace("Single");
+            FlowFile file = (FlowFile) result;
+            file = postprocessXform(context, session, file, sync, config);
+            trace("After postprocess");
+            urlList.eachWithIndex { j, index ->
+                if (index < urlListSize - 1 & urlListSize > 1) {
+                    FlowFile f = session.clone(file);
+                    session.putAttribute(f, "target_url", String.valueOf(j));
+                    session.transfer(f, Transform);
+                } else {
+                    if (file == null) {
+                        trace("Why null?");
+                    }
+                    session.putAttribute(file, "target_url", String.valueOf(j));
+                    //FlowFile ff = file as FlowFile
+                    session.transfer(file, Transform);
+                }
+            }
+        } else if (result instanceof ArrayList) {
+            trace("array");
+            ArrayList list = (ArrayList) result
+            trace(String.valueOf(list.size()));
+            for (FlowFile f : list) {
+                if (f == null) {
+                    continue;
+                }
+                FlowFile f1 = postprocessXform(context, session, f, sync, config);
+
+                urlList.eachWithIndex { j, index ->
+                    if (index < urlListSize - 1 & urlListSize > 1) {
+                        FlowFile fc = session.clone(f1);
+                        session.putAttribute(fc, "target_url", String.valueOf(j));
+                        session.transfer(fc, Transform);
+                    } else {
+                        session.putAttribute(f, "target_url", String.valueOf(j));
+                        session.transfer(f1, Transform);
+                    }
+                }
+            }
+        }
+    }
+
     //todo Перепроверить правильно ли config.response -> config.getString("response") и т.д
     private FlowFile postprocessXform(
             final ProcessContext context,
