@@ -566,7 +566,7 @@ public class IFlow extends AbstractProcessor {
                         replacementValue = propValue.evaluateAttributeExpressions(flowFile).getValue();
                         session.putAttribute(flowFile, "replace.text.replacement.value", replacementValue);
                         final int fileSize = (int) flowFile.getSize();
-                        flowFile = replaceText(flowFile, replacementStrategy, searchValue,
+                        flowFile = replaceText(session, flowFile, replacementStrategy, searchValue,
                                 replacementValue, "EntireText", StandardCharsets.UTF_8, fileSize);
                         break;
                     case("EvaluateXQuery"):
@@ -658,12 +658,13 @@ public class IFlow extends AbstractProcessor {
 
                         session.putAttribute(flowFile, "copy.index", "0");
 
+                        FlowFile f = session.clone(flowFile);
                         if (currStageIndx == xforms.length() - 1) {
                             flowFile = session.removeAttribute(f, "xform.group");
                         }
                         String ffid = flowFile.getAttribute("uuid");
                         for (int j = 0; j < numOfCopies; j++) {
-                            FlowFile f = session.clone(flowFile);
+                            f = session.clone(flowFile);
                             session.putAttribute(flowFile, "copy.index", String.valueOf(j + 1));
                             graylogNotifyStart(f, ffid);
                             FlowFile ff = null;
@@ -983,6 +984,7 @@ public class IFlow extends AbstractProcessor {
         return flowFile;
     }
 
+    //TODO проверить ошибки, т.к. скопировано с груви
     private void graylogNotify(FlowFile flowFile, String xformEntity) throws Exception{
         String sender = flowFile.getAttribute("http.query.param.senderService");
         if (sender == null) {
@@ -1010,14 +1012,15 @@ public class IFlow extends AbstractProcessor {
             xformStage = "unknown";
         }
 
+        //TODO проверить ошибки, т.к. скопировано с груви
         //Определение получателя
         Map<String, String> coordinate = new LinkedHashMap<>();
         String receiver = "Не определен";
-        def receiverLookup = receiverServiceId.asControllerService(StringLookupService)
+        var receiverLookup = receiverServiceId.asControllerService(StringLookupService);
         if (receiverLookup != null) {
 //            def coordinate = [key: requestUri]
             coordinate.put("key", requestUri);
-            def value = receiverLookup.lookup(coordinate);
+            var value = receiverLookup.lookup(coordinate);
             if (value.isPresent()) {
                 receiver = value.get();
             }
