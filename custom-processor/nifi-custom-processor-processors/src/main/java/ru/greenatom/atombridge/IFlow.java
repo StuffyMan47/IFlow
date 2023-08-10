@@ -38,6 +38,10 @@ import org.apache.nifi.distributed.cache.client.DistributedMapCacheClient;
 
 import java.io.InputStream;
 import java.io.StringReader;
+import java.net.HttpURLConnection;
+import java.net.InetAddress;
+import java.net.URL;
+import java.net.URLConnection;
 import java.util.*;
 
 //Импорты из груви скрипта
@@ -105,13 +109,15 @@ import java.util.List;
 @WritesAttributes({@WritesAttribute(attribute="", description="")})
 public class IFlow extends AbstractProcessor {
 
-    private Object xslRemoveEnv = null;
+    private final Object xslRemoveEnv = null;
     private String traceOut;
-    private int traceCount = 0;
+    private final int traceCount = 0;
     private String traceOut1;
-    private int traceCount1 = 0;
+    private final int traceCount1 = 0;
 
     private final ComponentLog logger = getLogger();
+
+    private static final String gelfURL = "http://1tesb-s-grl01.gk.rosatom.local:12001/gelf";
 
     public static final PropertyDescriptor MY_PROPERTY = new PropertyDescriptor
             .Builder().name("MY_PROPERTY")
@@ -270,7 +276,7 @@ public class IFlow extends AbstractProcessor {
                             trace("-ff");
                             session.remove(flowFile);
                         } else {
-                            List urlList = target.targetPath instanceof List ? target.targetPath : [target.targetPath];
+                            List urlList = target.targetPath instanceof List ? target.targetPath : [target.targetPath]
                             transferResult(result, sync, urlList, target);
                         }
                     } else {
@@ -278,18 +284,17 @@ public class IFlow extends AbstractProcessor {
                     }
                 } catch (Exception ex1) {
                     trace("!!!!!!!Exception: ${ex1.toString()}");
-                    StringBuilder exMsgBldr = new StringBuilder();
-                    exMsgBldr.append("Exception" + ex1 + "occurs");
-                    exMsgBldr.append(" while processing FlowFile" + flowFile.getAttribute("filename"));
 
-                    exMsgBldr.append(" in " + flowFile.getAttribute("business.process.name") + "scenario");
-                    exMsgBldr.append(" at " + flowFile.getAttribute("target.id") + "target");
-                    exMsgBldr.append(" at " + flowFile.getAttribute("xform.path") + "path");
-                    exMsgBldr.append(" at " + flowFile.getAttribute("xform.stage") +  "stage");
+                    String exMsgBldr = "Exception" + ex1 + "occurs" +
+                            " while processing FlowFile" + flowFile.getAttribute("filename") +
+                            " in " + flowFile.getAttribute("business.process.name") + "scenario" +
+                            " at " + flowFile.getAttribute("target.id") + "target" +
+                            " at " + flowFile.getAttribute("xform.path") + "path" +
+                            " at " + flowFile.getAttribute("xform.stage") + "stage";
 
                     session.putAttribute(flowFile, "error.msg", ex1.toString());
 
-                    logger.log(org.apache.nifi.logging.LogLevel.ERROR, exMsgBldr.toString());
+                    logger.log(org.apache.nifi.logging.LogLevel.ERROR, exMsgBldr);
                     logger.log(org.apache.nifi.logging.LogLevel.ERROR, traceOut);
 
                     session.putAttribute(flowFile, "error.msg", ex1.toString());
@@ -396,21 +401,20 @@ public class IFlow extends AbstractProcessor {
                                 session.remove(f);
                                 return;
                             } else {
-                                List urlList = it.targetPath instanceof List ? it.targetPath : [it.targetPath];
+                                List urlList = it.targetPath instanceof List ? it.targetPath : [it.targetPath]
                                 transferResult(result, sync, urlList, it);
                             }
                         } catch (Exception ex1) {
                             trace("!!!!!!!Exception: ${ex1.toString()}");
-                            StringBuilder exMsgBldr = new StringBuilder();
-                            exMsgBldr.append("Exception '${ex1.toString()}' occurs");
-                            exMsgBldr.append(" while processing FlowFile '${f.getAttribute('filename')}'");
 
-                            exMsgBldr.append(" in '${f.getAttribute('business.process.name')}' scenario");
-                            exMsgBldr.append(" at '${it.id}' target");
-                            exMsgBldr.append(" at ${f.getAttribute('xform.path')} path");
-                            exMsgBldr.append(" at ${f.getAttribute('xform.stage')} stage");
+                            String exMsgBldr = "Exception '${ex1.toString()}' occurs" +
+                                    " while processing FlowFile '${f.getAttribute('filename')}'" +
+                                    " in '${f.getAttribute('business.process.name')}' scenario" +
+                                    " at '${it.id}' target" +
+                                    " at ${f.getAttribute('xform.path')} path" +
+                                    " at ${f.getAttribute('xform.stage')} stage";
 
-                            logger.log(org.apache.nifi.logging.LogLevel.ERROR, exMsgBldr.toString());
+                            logger.log(org.apache.nifi.logging.LogLevel.ERROR, exMsgBldr);
                             logger.log(org.apache.nifi.logging.LogLevel.ERROR, traceOut);
 
                             session.putAttribute(f, "error.msg", ex1.toString());
@@ -478,7 +482,7 @@ public class IFlow extends AbstractProcessor {
 
             //Start process right after the previous stage
             if (currStageIndx > prevStageIndx) {
-                trace1("Stage " + String.valueOf(currStageIndx));
+                trace1("Stage " + currStageIndx);
                 //TODO при дебаге проверить получившийся JSON
                 String[] nameParamsPair = xform.toString().split("://");
                 Map<String, String> params = null;
@@ -491,7 +495,7 @@ public class IFlow extends AbstractProcessor {
                 }
                 //TODO временно оставил toString()
                 String name = nameParamsPair.length > 1 ? nameParamsPair[0] : xform.toString();
-                trace("processing " + String.valueOf(currStageIndx) + " stage");
+                trace("processing " + currStageIndx + " stage");
 
                 PropertyValue propValue;
                 String param;
@@ -615,7 +619,7 @@ public class IFlow extends AbstractProcessor {
                                 } else {
                                     int sfx = 1;
                                     for (String s : list) {
-                                        String attrName = paramEntry.getKey() + '.' + String.valueOf(sfx);
+                                        String attrName = paramEntry.getKey() + '.' + sfx;
                                         trace1("EvalXq res ${attrName} " + s);
                                         session.putAttribute(flowFile, attrName, s);
                                         sfx++;
@@ -697,7 +701,7 @@ public class IFlow extends AbstractProcessor {
                 break;
             }
         }
-        trace("Stage is " + String.valueOf(currStageIndx) + " size " + String.valueOf(xforms.length()));
+        trace("Stage is " + currStageIndx + " size " + xforms.length());
         if (currStageIndx == xforms.length() - 1) {
             if (isPropagated) {
                 if (!flowFile.getAttribute("target.output").equals("JSON")) {
@@ -795,11 +799,7 @@ public class IFlow extends AbstractProcessor {
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
-        try {
-            return result.toString("UTF-8");
-        } catch (UnsupportedEncodingException e) {
-            throw new RuntimeException(e);
-        }
+        return result.toString(StandardCharsets.UTF_8);
     }
 
     //Вроде норм, но надо будет потестить
@@ -831,9 +831,8 @@ public class IFlow extends AbstractProcessor {
 
     private String getResponse(String protocol, String code) {
         if (protocol.equals("XI")) {
-            switch (code) {
-                case "200":
-                    return "XI_OK";
+            if (code.equals("200")) {
+                return "XI_OK";
             }
         } else {
             return code;
@@ -891,6 +890,190 @@ public class IFlow extends AbstractProcessor {
 
         });
         return flowFile;
+    }
+
+    private void graylogNotify(FlowFile flowFile, String xformEntity) throws Exception{
+        String sender = flowFile.getAttribute("http.query.param.senderService");
+        if (sender == null) {
+            sender = "Не указан";
+        }
+        String processGroupId = "60484390-d08c-1fe2-b9a9-d47458b352ee";
+        String processGroupName = "Transform";
+        String hostName = InetAddress.getLocalHost().getHostName();
+        String fileName = flowFile.getAttribute("filename");
+        String uuid = flowFile.getAttribute("uuid");
+        String pathVal = flowFile.getAttribute("path");
+        String requestUri = flowFile.getAttribute("http.request.uri");
+        if (requestUri.equals("/sap/xi")) {
+            requestUri = flowFile.getAttribute("sap.Interface.value");
+        }
+
+        //unknow -> unknown
+        String xformPath = flowFile.getAttribute("xform.path");
+        if (xformPath == null) {
+            xformPath = "unknown";
+        }
+
+        String xformStage = flowFile.getAttribute("xform.stage");
+        if (xformStage == null) {
+            xformStage = "unknown";
+        }
+
+        //Определение получателя
+        Map<String, String> coordinate = new LinkedHashMap<>();
+        String receiver = "Не определен";
+        def receiverLookup = receiverServiceId.asControllerService(StringLookupService)
+        if (receiverLookup != null) {
+//            def coordinate = [key: requestUri]
+            coordinate.put("key", requestUri);
+            def value = receiverLookup.lookup(coordinate);
+            if (value.isPresent()) {
+                receiver = value.get();
+            }
+        }
+
+        if (receiver.equals("attribute")) {
+            receiver = flowFile.getAttribute("Receiver");
+        }
+        if (receiver == null) {
+            receiver = "Не определен";
+        }
+
+        //Определение бизнес-процесса
+        String businessProcessName = flowFile.getAttribute("business.process.name")
+        String specUrl = "https://1desb-s-app01.gk.rosatom.local/nifi-docs/components/ru.greenatom.atombridge/af-specification-nar/4.0.0.0/ru.greenatom.af.Specifications/index.html#" +
+                businessProcessName;
+
+        //Формирование GELF-сообщения
+        String shortMessage = "Сообщение в [" + processGroupName + "] c filename [" + fileName + "], бизнес-процесс [" + businessProcessName + "], отправитель [" + sender + "], получатель [" + receiver + "]";
+
+        Map<String, String> map = new LinkedHashMap<>();
+        map.put("_fileName", fileName);
+        map.put("path", pathVal);
+        map.put("short_message", shortMessage);
+        map.put("host", hostName);
+        map.put("facility", processGroupName);
+        map.put("_groupId", processGroupId);
+        map.put("level", "INFO");
+        map.put("_groupName", processGroupName);
+        map.put("_messageUuid", uuid);
+        map.put("_requestUrl", requestUri);
+        map.put("_sender", sender);
+        map.put("_receiver", receiver);
+        map.put("_entryType", "processing");
+        map.put("_businessProcess", businessProcessName);
+        map.put("specification", specUrl);
+        map.put("transformationEntity", xformEntity);
+        map.put("transformationPath", xformPath);
+        map.put("transformationStage", xformStage);
+
+       String json = groovy.json.JsonOutput.toJson(map);
+        //Отправка GELF-сообщения
+        sendGELFMessage(json);
+//        URL url = new URL ("http://1tesb-s-grl01.gk.rosatom.local:12001/gelf");
+//        HttpURLConnection post = (HttpURLConnection)url.openConnection();
+//        post.setRequestMethod("POST");
+//        post.setDoOutput(true);
+//        post.setRequestProperty("Content-Type", "application/json");
+//        post.getOutputStream().write(json.getBytes(StandardCharsets.UTF_8));
+//        int postRC = post.getResponseCode();
+//        if (postRC < 200 && postRC > 300) {
+//            throw new Exception("Ошибка отправки, код " + postRC);
+//        }
+    }
+
+    //Todo Разобраться с receiverServiceId.asControllerService опять..
+    private void graylogNotifyStart(FlowFile flowFile, String derivationId) throws Exception{
+        String sender = flowFile.getAttribute("http.query.param.senderService");
+        if (sender == null) {
+            sender = "Не указан";
+        }
+        String processGroupId = "60484390-d08c-1fe2-b9a9-d47458b352ee";
+        String processGroupName = "Transform";
+        String hostName = InetAddress.getLocalHost().getHostName();
+        String fileName = flowFile.getAttribute("filename");
+        String uuid = flowFile.getAttribute("uuid");
+        String pathVal = flowFile.getAttribute("path");
+        String requestUri = flowFile.getAttribute("http.request.uri");
+        if (requestUri.equals("/sap/xi")) {
+            requestUri = flowFile.getAttribute("sap.Interface.value");
+        }
+
+        //Определение получателя
+        Map<String, String> coordinate = new LinkedHashMap<>();
+        String receiver = "Не определен";
+        Object receiverLookup = receiverServiceId.asControllerService(StringLookupService);
+        if (receiverLookup != null) {
+//            Map<String, String> coordinate = [key: requestUri]
+            coordinate.put("key", requestUri);
+            def value = receiverLookup.lookup(coordinate);
+            if (value.isPresent()) {
+                receiver = value.get();
+            }
+        }
+
+        if (receiver.equals("attribute")) {
+            receiver = flowFile.getAttribute("Receiver");
+        }
+        if (receiver == null) {
+            receiver = "Не определен";
+        }
+
+        //Определение бизнес-процесса
+        String businessProcessName = flowFile.getAttribute("business.process.name");
+        String specUrl = "https://1desb-s-app01.gk.rosatom.local/nifi-docs/components/ru.greenatom.atombridge/af-specification-nar/4.0.0.0/ru.greenatom.af.Specifications/index.html#" +
+                businessProcessName;
+
+        //Формирование GELF-сообщения
+        String shortMessage = "Сообщение в [" + processGroupName + "] c filename [" + fileName + "], бизнес-процесс [" +
+                businessProcessName + "], отправитель [" + sender + "], получатель [" + receiver + "]";
+
+        Map<String, Serializable> map = new LinkedHashMap<>();
+        map.put("_fileName", fileName);
+        map.put("path", pathVal);
+        map.put("short_message", shortMessage);
+        map.put("host", hostName);
+        map.put("facility", processGroupName);
+        map.put("_groupId", processGroupId);
+        map.put("level", "INFO");
+        map.put("_groupName", processGroupName);
+        map.put("_messageUuid", uuid);
+        map.put("_requestUrl", requestUri);
+        map.put("_sender", sender);
+        map.put("_receiver", receiver);
+        map.put("_entryType", "start");
+        map.put("_LogStart", 1);
+        map.put("_LogSuccess", 0);
+        map.put("_businessProcess", businessProcessName);
+        map.put("specification", specUrl);
+        map.put("derivation", derivationId);
+
+        String json = groovy.json.JsonOutput.toJson(map);
+        //Отправка GELF-сообщения
+        sendGELFMessage(json);
+//        URL url = new URL ("http://1tesb-s-grl01.gk.rosatom.local:12001/gelf");
+//        HttpURLConnection post = (HttpURLConnection)url.openConnection();
+//        post.setRequestMethod("POST");
+//        post.setDoOutput(true);
+//        post.setRequestProperty("Content-Type", "application/json");
+//        post.getOutputStream().write(json.getBytes(StandardCharsets.UTF_8));
+//        int postRC = post.getResponseCode();
+//        if (postRC < 200 && postRC > 300) {
+//            throw new Exception("Ошибка отправки, код " + postRC);
+//        }
+    }
+
+    private void sendGELFMessage(String msg) throws Exception {
+        URL url = new URL ("http://1tesb-s-grl01.gk.rosatom.local:12001/gelf");
+        HttpURLConnection post = (HttpURLConnection)url.openConnection();
+        post.setRequestMethod("POST");
+        post.setDoOutput(true);
+        post.setRequestProperty("Content-Type", "application/json");
+        post.getOutputStream().write(msg.getBytes(StandardCharsets.UTF_8));
+        int postRC = post.getResponseCode();
+        if (postRC < 200 && postRC > 300) {
+            throw new Exception("Ошибка отправки, код " + postRC);
+        }
     }
 
     private FlowFile regexReplaceText(
