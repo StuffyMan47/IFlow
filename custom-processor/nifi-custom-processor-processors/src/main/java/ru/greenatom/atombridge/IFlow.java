@@ -21,6 +21,7 @@ import groovy.util.XmlParser;
 import org.apache.nifi.annotation.behavior.*;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.controller.ControllerService;
+import org.apache.nifi.controller.ControllerServiceLookup;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.annotation.lifecycle.OnScheduled;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
@@ -227,14 +228,13 @@ public class IFlow extends AbstractProcessor {
 
         /** Посмотреть откуда берётся IflowMapCacheLookupClient и т.д **/
         //todo Пофиксиить
-        String iflowMapCacheLookupClientName = IflowMapCacheLookupClient.getValue();
-        String iflowMapCacheLookupClientName1 = IflowMapCacheLookupClient.getIdentifier();
-        String xsdMapCacheLookupClientName = XsdMapCacheLookupClient.getValue();
-        String xsltMapCacheLookupClientName = XsltMapCacheLookupClient.getValue();
+        String iflowMapCacheLookupClientName = IflowMapCacheLookupClient.getIdentifier();
+        String xsdMapCacheLookupClientName = XsdMapCacheLookupClient.getIdentifier();
+        String xsltMapCacheLookupClientName = XsltMapCacheLookupClient.getIdentifier();
 
 
         try {
-            var iflowCacheMap = getServiceController(iflowMapCacheLookupClientName, context);
+            ControllerService iflowCacheMap = getServiceController(iflowMapCacheLookupClientName, context);
             var xsdCacheMap = getServiceController(xsdMapCacheLookupClientName, context);
             var xsltCacheMap = getServiceController(xsltMapCacheLookupClientName, context);
 
@@ -302,7 +302,8 @@ public class IFlow extends AbstractProcessor {
                             trace("-ff");
                             session.remove(flowFile);
                         } else {
-                            List urlList = target.targetPath instanceof List ? target.targetPath : [target.targetPath]
+//                            List urlList = target.targetPath instanceof List ? target.targetPath : [target.targetPath]
+                            List<String> urlList = target.get("targetPath") instanceof List ? (List<String>) target.get("targetPath") : List.of(String.valueOf(target.get("targetPath")));
                             transferResult(context, session, result, sync, urlList, target);
                         }
                     } else {
@@ -390,6 +391,7 @@ public class IFlow extends AbstractProcessor {
 
                 ProvenanceReporter reporter = session.getProvenanceReporter();
 
+
                 targets.eachWithIndex { it, flowIndex ->
                         ArrayList xforms = it.transformations as ArrayList
                     //Make a copy of incoming flow file for each target system
@@ -415,13 +417,13 @@ public class IFlow extends AbstractProcessor {
 
                     FlowFile f = null;
 
-                    for (ArrayList xform : xforms) {
+                    for (JSONObject xform : xforms) {
                         try {
                             xformPath++;
                             session.putAttribute(file, "xform.path", String.valueOf(xformPath));
                             f = xformPath < xforms.size() - 1 & xforms.size() > 1 ? session.clone(file) : file;
 
-                            def result = processXform(f, xform, it.id);
+                            def result = processXform(context, session,f, xform, it.id);
                             reporter.modifyContent(f);
                             if (result == null) {
                                 session.remove(f);
@@ -464,12 +466,13 @@ public class IFlow extends AbstractProcessor {
 //        var lookup = context.;
     }
 
+    //todo тут было это JSONArray xforms,
     //Returns processed FlowFile or ArrayList of processed FlowFiles
     private FlowFile processXform(
             final ProcessContext context,
             final ProcessSession session,
             FlowFile flowFile,
-            JSONArray xforms,
+            ArrayList<JSONObject> xforms,
             String targetId
     ) throws Exception{
         boolean isFlowFileSuppressed = false;
@@ -496,8 +499,8 @@ public class IFlow extends AbstractProcessor {
 
         session.getProvenanceReporter().modifyContent(flowFile, "wsrhsrh");
 
-        for (int i = 0; i < xforms.length(); i++) {
-            JSONObject xform = xforms.getJSONObject(i);
+        for (int i = 0; i < xforms.size(); i++) {
+            JSONObject xform = xforms.get(i);
             //Stop processing flow file if it is suppressed at routing stage
             if (isFlowFileSuppressed) {
                 return null;
@@ -625,12 +628,15 @@ public class IFlow extends AbstractProcessor {
 
                                     @Override
                                     public void process(InputStream is) throws IOException{
-                                        List<Object> nodes = evaluateXPath(is,
-                                                paramEntry.getValue().replace("\\\\", "\\"));
-
-                                        for (Object node : nodes) {
-                                            list.add(node);
+                                        List<String> nodes = null;
+                                        try {
+                                            nodes = evaluateXPath(is,
+                                                    paramEntry.getValue().replace("\\\\", "\\"));
+                                        } catch (Exception e) {
+                                            throw new RuntimeException(e);
                                         }
+
+                                        list.addAll(nodes);
 
                                     }
 
@@ -640,13 +646,14 @@ public class IFlow extends AbstractProcessor {
                                 trace1("+res");
                                 if (list.size() == 1) {
                                     session.putAttribute(flowFile, paramEntry.getKey(), list.get(0));
-                                    trace1("EvalXq res ${paramEntry.getKey()} " + list.get(0));
+                                    trace1("EvalXq res " + paramEntry.getKey() + list.get(0));
                                 } else {
                                     int sfx = 1;
-                                    for (String s : list) {
+                                    //todo s - > str
+                                    for (String str : list) {
                                         String attrName = paramEntry.getKey() + '.' + sfx;
-                                        trace1("EvalXq res ${attrName} " + s);
-                                        session.putAttribute(flowFile, attrName, s);
+                                        trace1("EvalXq res" +  attrName + " " + str);
+                                        session.putAttribute(flowFile, attrName, str);
                                         sfx++;
                                     }
                                 }
@@ -663,7 +670,11 @@ public class IFlow extends AbstractProcessor {
 
                             @Override
                             public void process(InputStream is, OutputStream os) throws IOException{
-                                applyXslt(is, os, parameter);
+                                try {
+                                    applyXslt(is, os, parameter);
+                                } catch (TransformerException e) {
+                                    throw new RuntimeException(e);
+                                }
                                 os.flush();
                             }
 
@@ -684,7 +695,7 @@ public class IFlow extends AbstractProcessor {
                         session.putAttribute(flowFile, "copy.index", "0");
 
                         FlowFile f = session.clone(flowFile);
-                        if (currStageIndx == xforms.length() - 1) {
+                        if (currStageIndx == xforms.size() - 1) {
                             flowFile = session.removeAttribute(f, "xform.group");
                         }
                         String ffid = flowFile.getAttribute("uuid");
@@ -693,7 +704,7 @@ public class IFlow extends AbstractProcessor {
                             session.putAttribute(flowFile, "copy.index", String.valueOf(j + 1));
                             graylogNotifyStart(f, ffid);
                             FlowFile ff = null;
-                            if (currStageIndx < xforms.length() - 1) {
+                            if (currStageIndx < xforms.size() - 1) {
                                 ff = processXform(context, session, f, xforms, targetId);
                             }
                             if (ff == null) {
@@ -702,7 +713,7 @@ public class IFlow extends AbstractProcessor {
                                 result.add(ff);
                             }
                         }
-                        if (currStageIndx < xforms.length() - 1) {
+                        if (currStageIndx < xforms.size() - 1) {
                             FlowFile ff = processXform(context, session, flowFile, xforms, targetId);
                             if (ff == null) {
                                 session.remove(flowFile);
@@ -727,8 +738,8 @@ public class IFlow extends AbstractProcessor {
                 break;
             }
         }
-        trace("Stage is " + currStageIndx + " size " + xforms.length());
-        if (currStageIndx == xforms.length() - 1) {
+        trace("Stage is " + currStageIndx + " size " + xforms.size());
+        if (currStageIndx == xforms.size() - 1) {
             if (isPropagated) {
                 if (!flowFile.getAttribute("target.output").equals("JSON")) {
                     //Red pill for last xform to transfer flow file to the upload group
@@ -750,7 +761,7 @@ public class IFlow extends AbstractProcessor {
     /**Не до конца понимает, что должно вернуть**/
     private ControllerService getServiceController (final String name, final ProcessContext context){
         trace(String.format("get service controller: %s", name));
-        var lookup = context.getControllerServiceLookup();
+        ControllerServiceLookup lookup = context.getControllerServiceLookup();
         String serviceId = lookup.getControllerServiceIdentifiers(ControllerService.class)
                 .stream()
                 .filter(cs -> lookup.getControllerServiceName(cs).equals(name))
@@ -758,24 +769,6 @@ public class IFlow extends AbstractProcessor {
                 .orElse(null);
         return lookup.getControllerService(serviceId);
     }
-
-    //старая версия листа
-//    List<Object> evaluateXPath(InputStream inputStream, String xpathQuery){
-//        Element records = null;
-//        try {
-//            records = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(inputStream).getDocumentElement();
-//        } catch (SAXException | IOException | ParserConfigurationException e) {
-//            throw new RuntimeException(e);
-//        }
-//        XPath xPath = XPathFactory.newInstance().newXPath();
-//        Object nodes;
-//        try {
-//            nodes = xPath.evaluate(xpathQuery, records, XPathConstants.NODESET);
-//        } catch (XPathExpressionException e) {
-//            throw new RuntimeException(e);
-//        }
-//        return DefaultGroovyMethods.collect{node -> node.textContent};
-
 
     public List<String> evaluateXPath(InputStream inputStream, String xpathQuery) throws Exception {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
@@ -1007,7 +1000,7 @@ public class IFlow extends AbstractProcessor {
             }
         } else if (result instanceof ArrayList) {
             trace("array");
-            ArrayList list = (ArrayList) result
+            ArrayList list = (ArrayList) result;
             trace(String.valueOf(list.size()));
             for (FlowFile f : list) {
                 if (f == null) {
