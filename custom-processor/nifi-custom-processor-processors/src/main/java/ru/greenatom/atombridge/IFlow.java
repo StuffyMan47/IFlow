@@ -16,6 +16,7 @@
  */
 package ru.greenatom.atombridge;
 
+import groovy.json.internal.Cache;
 import groovy.util.XmlParser;
 import org.apache.nifi.annotation.behavior.*;
 import org.apache.nifi.components.PropertyDescriptor;
@@ -131,7 +132,21 @@ public class IFlow extends AbstractProcessor {
             .build();
 
     public static final PropertyDescriptor PROP_DISTRIBUTED_CACHE_SERVICE = new PropertyDescriptor.Builder()
-            .name("Distributed Cache Service")
+            .name("Iflow Map Cache Lookup ")
+            .description("The Controller Service that is used to get the cached values.")
+            .required(true)
+            .identifiesControllerService(DistributedMapCacheClient.class)
+            .build();
+
+    public static final PropertyDescriptor PROP_XSDMAP_CACHE_SERVICE = new PropertyDescriptor.Builder()
+            .name("Xsd Map Cache Lookup Client")
+            .description("The Controller Service that is used to get the cached values.")
+            .required(true)
+            .identifiesControllerService(DistributedMapCacheClient.class)
+            .build();
+
+    public static final PropertyDescriptor PROP_XSLTMAP_CACHE_SERVICE = new PropertyDescriptor.Builder()
+            .name("Xslt Map Cache Lookup Client")
             .description("The Controller Service that is used to get the cached values.")
             .required(true)
             .identifiesControllerService(DistributedMapCacheClient.class)
@@ -161,6 +176,8 @@ public class IFlow extends AbstractProcessor {
         final List<PropertyDescriptor> descriptors = new ArrayList<PropertyDescriptor>();
         descriptors.add(MY_PROPERTY);
         descriptors.add(PROP_DISTRIBUTED_CACHE_SERVICE);
+        descriptors.add(PROP_XSDMAP_CACHE_SERVICE);
+        descriptors.add(PROP_XSLTMAP_CACHE_SERVICE);
         this.descriptors = Collections.unmodifiableList(descriptors);
 
         final Set<Relationship> relationships = new HashSet<Relationship>();
@@ -203,12 +220,15 @@ public class IFlow extends AbstractProcessor {
             throw new RuntimeException(e);
         }
 
-        final DistributedMapCacheClient cache = context.getProperty(PROP_DISTRIBUTED_CACHE_SERVICE).asControllerService(DistributedMapCacheClient.class);
+        final DistributedMapCacheClient IflowMapCacheLookupClient = context.getProperty(PROP_DISTRIBUTED_CACHE_SERVICE).asControllerService(DistributedMapCacheClient.class);
+        final DistributedMapCacheClient XsdMapCacheLookupClient = context.getProperty(PROP_XSDMAP_CACHE_SERVICE).asControllerService(DistributedMapCacheClient.class);
+        final DistributedMapCacheClient XsltMapCacheLookupClient = context.getProperty(PROP_XSLTMAP_CACHE_SERVICE).asControllerService(DistributedMapCacheClient.class);
 
 
         /** Посмотреть откуда берётся IflowMapCacheLookupClient и т.д **/
         //todo Пофиксиить
         String iflowMapCacheLookupClientName = IflowMapCacheLookupClient.getValue();
+        String iflowMapCacheLookupClientName1 = IflowMapCacheLookupClient.getIdentifier();
         String xsdMapCacheLookupClientName = XsdMapCacheLookupClient.getValue();
         String xsltMapCacheLookupClientName = XsltMapCacheLookupClient.getValue();
 
