@@ -132,6 +132,14 @@ public class IFlow extends AbstractProcessor {
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .build();
 
+    public static final PropertyDescriptor RECEIVER_SERVICE_ID = new PropertyDescriptor
+            .Builder().name("RECEIVER_SERVICE_ID")
+            .displayName("Receiver Service Id")
+            .description("Example Property")
+            .required(true)
+            .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
+            .build();
+
     public static final PropertyDescriptor PROP_DISTRIBUTED_CACHE_SERVICE = new PropertyDescriptor.Builder()
             .name("Iflow Map Cache Lookup ")
             .description("The Controller Service that is used to get the cached values.")
@@ -176,6 +184,7 @@ public class IFlow extends AbstractProcessor {
     protected void init(final ProcessorInitializationContext context) {
         final List<PropertyDescriptor> descriptors = new ArrayList<PropertyDescriptor>();
         descriptors.add(MY_PROPERTY);
+        descriptors.add(RECEIVER_SERVICE_ID);
         descriptors.add(PROP_DISTRIBUTED_CACHE_SERVICE);
         descriptors.add(PROP_XSDMAP_CACHE_SERVICE);
         descriptors.add(PROP_XSLTMAP_CACHE_SERVICE);
@@ -260,7 +269,7 @@ public class IFlow extends AbstractProcessor {
             if (ret != null) {
                 trace("iFlow not found, return 501");
                 logger.error( "iFlow named:" + flowFile.getAttribute("business.process.name") + "not found!");
-                session.putAttribute(flowFile, "iflow.error", "iFlow named:" + flowFile.getAttribute("business.process.name") + "not found!")
+                session.putAttribute(flowFile, "iflow.error", "iFlow named:" + flowFile.getAttribute("business.process.name") + "not found!");
                 session.putAttribute(flowFile, "iflow.status.code", getResponse("", "501"));
                 session.transfer(flowFile, Failure);
                 return;
@@ -341,7 +350,7 @@ public class IFlow extends AbstractProcessor {
 
                                 @Override
                                 public void serialize(final String value, final OutputStream out) throws SerializationException, IOException {
-                                    out.write(value.getBytes(StandardCharsets.UTF_8))
+                                    out.write(value.getBytes(StandardCharsets.UTF_8));
                                 }
 
                             },
@@ -374,7 +383,7 @@ public class IFlow extends AbstractProcessor {
                     Source xmlFile = new StreamSource(fis);
                     javax.xml.validation.SchemaFactory schemaFactory = SchemaFactory
                             .newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
-                    javax.xml.validation.Schema schema = schemaFactory.newSchema(new StreamSource(new StringReader(schemaContent)))
+                    javax.xml.validation.Schema schema = schemaFactory.newSchema(new StreamSource(new StringReader(schemaContent)));
                     javax.xml.validation.Validator validator = schema.newValidator();
                     validator.validate(xmlFile);
                 } catch (Exception e) {
@@ -393,7 +402,7 @@ public class IFlow extends AbstractProcessor {
 
 
                 targets.eachWithIndex { it, flowIndex ->
-                        ArrayList xforms = it.transformations as ArrayList
+                        ArrayList xforms = it.transformations as ArrayList;
                     //Make a copy of incoming flow file for each target system
                     //Or use the incoming flowfile for last target
                     //FlowFile file = flowIndex < numOfTargets - 1 & numOfTargets > 1 ? session.clone(flowFile) : flowFile
@@ -412,7 +421,7 @@ public class IFlow extends AbstractProcessor {
                     }
 
                     if (it.output == "JSON") {
-                        session.putAttribute(file, "target.output", "JSON")
+                        session.putAttribute(file, "target.output", "JSON");
                     }
 
                     FlowFile f = null;
@@ -429,7 +438,7 @@ public class IFlow extends AbstractProcessor {
                                 session.remove(f);
                                 return;
                             } else {
-                                List urlList = it.targetPath instanceof List ? it.targetPath : [it.targetPath]
+                                List urlList = it.targetPath instanceof List ? it.targetPath : [it.targetPath];
                                 transferResult(result, sync, urlList, it);
                             }
                         } catch (Exception ex1) {
@@ -1055,7 +1064,7 @@ public class IFlow extends AbstractProcessor {
     }
 
     //TODO проверить ошибки, т.к. скопировано с груви
-    private void graylogNotify(FlowFile flowFile, String xformEntity) throws Exception{
+    private void graylogNotify(ProcessContext context, FlowFile flowFile, String xformEntity) throws Exception{
         String sender = flowFile.getAttribute("http.query.param.senderService");
         if (sender == null) {
             sender = "Не указан";
@@ -1082,14 +1091,16 @@ public class IFlow extends AbstractProcessor {
             xformStage = "unknown";
         }
 
-        //TODO проверить ошибки, т.к. скопировано с груви
+        //TODO чёт какая-то мутная параша, не понятно что за lookup(coordinate)
         //Определение получателя
         Map<String, String> coordinate = new LinkedHashMap<>();
         String receiver = "Не определен";
-        var receiverLookup = receiverServiceId.asControllerService(StringLookupService);
+        PropertyValue receiverServiceId = context.getProperty(RECEIVER_SERVICE_ID);
+        ControllerService receiverLookup = receiverServiceId.asControllerService();
         if (receiverLookup != null) {
 //            def coordinate = [key: requestUri]
             coordinate.put("key", requestUri);
+            var val =
             var value = receiverLookup.lookup(coordinate);
             if (value.isPresent()) {
                 receiver = value.get();
