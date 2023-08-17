@@ -74,6 +74,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import org.apache.nifi.components.PropertyValue;
+import org.apache.nifi.lookup.LookupService;
 import org.apache.nifi.lookup.StringLookupService;
 
 import javax.xml.XMLConstants;
@@ -319,7 +320,7 @@ public class IFlow extends AbstractProcessor {
                         throw new Exception("Incorrect transformation path " + xformPath);
                     }
                 } catch (Exception ex1) {
-                    trace("!!!!!!!Exception: ${ex1.toString()}");
+                    trace("!!!!!!!Exception:"  + ex1.toString());
 
                     String exMsgBldr = "Exception" + ex1 + "occurs" +
                             " while processing FlowFile" + flowFile.getAttribute("filename") +
@@ -365,7 +366,7 @@ public class IFlow extends AbstractProcessor {
 
                                 }});
                     if (schemaContent == null) {
-                        throw new IOException("Schema with name ${iflow.validate} not found");
+                        throw new IOException("Schema with name" + iflow.validate +  "not found");
                     }
                 } catch (Exception e) {
                     //todo Мб вынести в отдельный метод?
@@ -1100,7 +1101,7 @@ public class IFlow extends AbstractProcessor {
         if (receiverLookup != null) {
 //            def coordinate = [key: requestUri]
             coordinate.put("key", requestUri);
-            var val =
+//            var val =
             var value = receiverLookup.lookup(coordinate);
             if (value.isPresent()) {
                 receiver = value.get();
