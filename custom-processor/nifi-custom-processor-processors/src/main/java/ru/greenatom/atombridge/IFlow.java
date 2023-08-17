@@ -1095,17 +1095,14 @@ public class IFlow extends AbstractProcessor {
 
         //TODO чёт какая-то мутная параша, не понятно что за lookup(coordinate)
         //Определение получателя
-        Map<String, String> coordinate = new LinkedHashMap<>();
+        Map<String, Object> coordinate = new LinkedHashMap<>();
         String receiver = "Не определен";
         //не уверен
-        PropertyValue receiverServiceId = context.getProperty(RECEIVER_SERVICE_ID);
-        ControllerService receiverLookup = receiverServiceId.asControllerService(StringLookupService.class);
-        final LookupService<String> lookupService = context.getProperty(RECEIVER_SERVICE_ID).asControllerService(StringLookupService.class);
+        final LookupService<String> receiverLookup = context.getProperty(RECEIVER_SERVICE_ID).asControllerService(StringLookupService.class);
         if (receiverLookup != null) {
 //            def coordinate = [key: requestUri]
             coordinate.put("key", requestUri);
-            final Optional<String> foundSource = lookupService.lookup(coordinates);
-            var value = receiverLookup.lookup(coordinate);
+            final Optional<String> value = receiverLookup.lookup(coordinate);
             if (value.isPresent()) {
                 receiver = value.get();
             }
@@ -1162,7 +1159,7 @@ public class IFlow extends AbstractProcessor {
     }
 
     //Todo Разобраться с receiverServiceId.asControllerService опять..
-    private void graylogNotifyStart(FlowFile flowFile, String derivationId) throws Exception{
+    private void graylogNotifyStart(final ProcessContext context, FlowFile flowFile, String derivationId) throws Exception{
         String sender = flowFile.getAttribute("http.query.param.senderService");
         if (sender == null) {
             sender = "Не указан";
@@ -1179,13 +1176,13 @@ public class IFlow extends AbstractProcessor {
         }
 
         //Определение получателя
-        Map<String, String> coordinate = new LinkedHashMap<>();
+        Map<String, Object> coordinate = new LinkedHashMap<>();
         String receiver = "Не определен";
-        Object receiverLookup = receiverServiceId.asControllerService(StringLookupService);
+        final LookupService<String> receiverLookup = context.getProperty(RECEIVER_SERVICE_ID).asControllerService(StringLookupService.class);
         if (receiverLookup != null) {
 //            Map<String, String> coordinate = [key: requestUri]
             coordinate.put("key", requestUri);
-            var value = receiverLookup.lookup(coordinate);
+            final Optional<String> value = receiverLookup.lookup(coordinate);
             if (value.isPresent()) {
                 receiver = value.get();
             }
