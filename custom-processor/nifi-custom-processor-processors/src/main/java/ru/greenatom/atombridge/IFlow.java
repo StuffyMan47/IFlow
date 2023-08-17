@@ -60,6 +60,7 @@ import javax.xml.transform.TransformerException;
 import javax.xml.transform.TransformerFactory;
 import javax.xml.transform.stream.StreamResult;
 import javax.xml.transform.stream.StreamSource;
+import org.apache.nifi.lookup.LookupService;
 
 import javax.xml.xpath.*;
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -1095,12 +1096,14 @@ public class IFlow extends AbstractProcessor {
         //Определение получателя
         Map<String, String> coordinate = new LinkedHashMap<>();
         String receiver = "Не определен";
+        //не уверен
         PropertyValue receiverServiceId = context.getProperty(RECEIVER_SERVICE_ID);
-        ControllerService receiverLookup = receiverServiceId.asControllerService();
+        ControllerService receiverLookup = receiverServiceId.asControllerService(StringLookupService.class);
+        final LookupService<String> lookupService = context.getProperty(RECEIVER_SERVICE_ID).asControllerService(StringLookupService.class);
         if (receiverLookup != null) {
 //            def coordinate = [key: requestUri]
             coordinate.put("key", requestUri);
-            var val =
+            final Optional<String> foundSource = lookupService.lookup(coordinates);
             var value = receiverLookup.lookup(coordinate);
             if (value.isPresent()) {
                 receiver = value.get();
