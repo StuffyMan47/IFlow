@@ -347,16 +347,25 @@ public class IFlow extends AbstractProcessor {
                     }
                     JSONObject target = targets.getJSONObject(targetIndx);
 
-                    JSONArray xforms = iflow.getJSONArray("xforms");
+                    //Преобразование JSONArray в ArrayList<JSONObject> (вроде правильно)
+                    JSONArray xformsJA = iflow.getJSONArray("xforms");
+                    ArrayList<JSONObject> xforms = new ArrayList<JSONObject>();
+                    if (xforms != null) {
+                        for (int i=0;i<xformsJA.length();i++){
+                            xforms.add((JSONObject) xformsJA.get(i));
+                        }
+                    }
+
 
                     int xformPath = Integer.parseInt(flowFile.getAttribute("xform.path"));
 
-                    if (xformPath > -1 & xformPath < xforms.length()) {
+                    if (xformPath > -1 & xformPath < xformsJA.length()) {
                         if (target.get("output") == "JSON") {
                             session.putAttribute(flowFile, "target.output", "JSON");
                         }
                         var xform = xforms.get(xformPath);
-                        FlowFile result = processXform(context, session, flowFile, xform, targetId);
+                        //FlowFile result = processXform(context, session, flowFile, xform, targetId);
+                        FlowFile result = processXform(context, session, flowFile, xforms, targetId);
                         if (result == null) {
                             trace("-ff");
                             session.remove(flowFile);
