@@ -22,6 +22,8 @@ import org.apache.nifi.annotation.behavior.*;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.controller.ControllerService;
 import org.apache.nifi.controller.ControllerServiceLookup;
+import org.apache.nifi.expression.AttributeExpression;
+import org.apache.nifi.expression.ExpressionLanguageScope;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.annotation.lifecycle.OnScheduled;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
@@ -60,10 +62,12 @@ import javax.xml.transform.TransformerException;
 import javax.xml.transform.TransformerFactory;
 import javax.xml.transform.stream.StreamResult;
 import javax.xml.transform.stream.StreamSource;
+
 import org.apache.nifi.lookup.LookupService;
 
 import javax.xml.xpath.*;
 import javax.xml.parsers.DocumentBuilderFactory;
+
 import org.apache.nifi.distributed.cache.client.Deserializer;
 import org.apache.nifi.distributed.cache.client.Serializer;
 import org.apache.nifi.distributed.cache.client.exception.DeserializationException;
@@ -74,6 +78,7 @@ import org.apache.nifi.provenance.ProvenanceReporter;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+
 import org.apache.nifi.components.PropertyValue;
 import org.apache.nifi.lookup.LookupService;
 import org.apache.nifi.lookup.StringLookupService;
@@ -83,6 +88,7 @@ import javax.xml.transform.Source;
 import javax.xml.transform.stream.StreamSource;
 import javax.xml.validation.*;
 
+import org.apache.nifi.util.StringUtils;
 import org.codehaus.groovy.ant.Groovy;
 import org.codehaus.groovy.runtime.DefaultGroovyMethods;
 import org.json.XML;
@@ -98,22 +104,25 @@ import java.nio.charset.Charset;
 import org.apache.nifi.stream.io.StreamUtils;
 
 import groovy.lang.Binding;
+
 import java.util.logging.Logger;
 
 import static org.codehaus.groovy.tools.xml.DomToGroovy.parse;
 
 import org.w3c.dom.*;
+
 import javax.xml.xpath.*;
 import javax.xml.parsers.*;
 import java.io.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Tags({"example"})
 @CapabilityDescription("Provide a description")
 @SeeAlso({})
-@ReadsAttributes({@ReadsAttribute(attribute="", description="")})
-@WritesAttributes({@WritesAttribute(attribute="", description="")})
+@ReadsAttributes({@ReadsAttribute(attribute = "", description = "")})
+@WritesAttributes({@WritesAttribute(attribute = "", description = "")})
 public class IFlow extends AbstractProcessor {
 
     private Transformer xslRemoveEnv = null;
@@ -163,6 +172,46 @@ public class IFlow extends AbstractProcessor {
             .identifiesControllerService(DistributedMapCacheClient.class)
             .build();
 
+    public static final PropertyDescriptor PROP_CACHE_ENTRY_IDENTIFIER = new PropertyDescriptor.Builder()
+            .name("Cache Entry Identifier")
+            .description("A comma-delimited list of FlowFile attributes, or the results of Attribute Expression Language statements, which will be evaluated "
+                    + "against a FlowFile in order to determine the value(s) used to identify duplicates; it is these values that are cached. NOTE: Only a single "
+                    + "Cache Entry Identifier is allowed unless Put Cache Value In Attribute is specified. Multiple cache lookups are only supported when the destination "
+                    + "is a set of attributes (see the documentation for 'Put Cache Value In Attribute' for more details including naming convention.")
+            .required(true)
+            .addValidator(StandardValidators.createAttributeExpressionLanguageValidator(AttributeExpression.ResultType.STRING, true))
+            .defaultValue("${hash.value}")
+            .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
+            .build();
+
+    public static final PropertyDescriptor PROP_CHARACTER_SET = new PropertyDescriptor.Builder()
+            .name("Character Set")
+            .description("The Character Set in which the cached value is encoded. This will only be used when routing to an attribute.")
+            .required(false)
+            .addValidator(StandardValidators.CHARACTER_SET_VALIDATOR)
+            .defaultValue("UTF-8")
+            .build();
+
+
+    public static final PropertyDescriptor PROP_PUT_CACHE_VALUE_IN_ATTRIBUTE = new PropertyDescriptor.Builder()
+            .name("Put Cache Value In Attribute")
+            .description("If set, the cache value received will be put into an attribute of the FlowFile instead of a the content of the"
+                    + "FlowFile. The attribute key to put to is determined by evaluating value of this property. If multiple Cache Entry Identifiers are selected, "
+                    + "multiple attributes will be written, using the evaluated value of this property, appended by a period (.) and the name of the cache entry identifier.")
+            .addValidator(StandardValidators.createAttributeExpressionLanguageValidator(AttributeExpression.ResultType.STRING))
+            .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
+            .build();
+
+    public static final PropertyDescriptor PROP_PUT_ATTRIBUTE_MAX_LENGTH = new PropertyDescriptor.Builder()
+            .name("Max Length To Put In Attribute")
+            .description("If routing the cache value to an attribute of the FlowFile (by setting the \"Put Cache Value in attribute\" "
+                    + "property), the number of characters put to the attribute value will be at most this amount. This is important because "
+                    + "attributes are held in memory and large attributes will quickly cause out of memory issues. If the output goes "
+                    + "longer than this value, it will be truncated to fit. Consider making this smaller if able.")
+            .addValidator(StandardValidators.POSITIVE_INTEGER_VALIDATOR)
+            .defaultValue("256")
+            .build();
+
     public static final Relationship Load = new Relationship.Builder()
             .name("Load")
             .description("Example relationship")
@@ -181,6 +230,9 @@ public class IFlow extends AbstractProcessor {
     private List<PropertyDescriptor> descriptors;
 
     private Set<Relationship> relationships;
+
+    private final Serializer<String> keySerializer = new StringSerializer();
+    private final Deserializer<String> valueDeserializer = new CacheValueDeserializer();
 
     @Override
     protected void init(final ProcessorInitializationContext context) {
@@ -205,7 +257,6 @@ public class IFlow extends AbstractProcessor {
     }
 
 
-
     @Override
     public final List<PropertyDescriptor> getSupportedPropertyDescriptors() {
         return descriptors;
@@ -219,10 +270,9 @@ public class IFlow extends AbstractProcessor {
     @Override
     public void onTrigger(final ProcessContext context, final ProcessSession session) throws ProcessException {
         FlowFile flowFile = session.get();
-        if ( flowFile == null ) {
+        if (flowFile == null) {
             return;
         }
-
 
 
         XPath xpath = XPathFactory.newInstance().newXPath();
@@ -231,6 +281,27 @@ public class IFlow extends AbstractProcessor {
         } catch (ParserConfigurationException e) {
             throw new RuntimeException(e);
         }
+
+        final ComponentLog logger = getLogger();
+        final String cacheKey = context.getProperty(PROP_CACHE_ENTRY_IDENTIFIER).evaluateAttributeExpressions(flowFile).getValue();
+        // This block retains the previous behavior when only one Cache Entry Identifier was allowed, so as not to change the expected error message
+        if (StringUtils.isBlank(cacheKey)) {
+            logger.error("FlowFile {} has no attribute for given Cache Entry Identifier", new Object[]{flowFile});
+            flowFile = session.penalize(flowFile);
+            session.transfer(flowFile, Failure);
+            return;
+        }
+        List<String> cacheKeys = Arrays.stream(cacheKey.split(",")).filter(path -> !StringUtils.isEmpty(path)).map(String::trim).collect(Collectors.toList());
+        for (int i = 0; i < cacheKeys.size(); i++) {
+            if (StringUtils.isBlank(cacheKeys.get(i))) {
+                // Log first missing identifier, route to failure, and return
+                logger.error("FlowFile {} has no attribute for Cache Entry Identifier in position {}", new Object[]{flowFile, i});
+                flowFile = session.penalize(flowFile);
+                session.transfer(flowFile, Failure);
+                return;
+            }
+        }
+
 
         final DistributedMapCacheClient IflowMapCacheLookupClient = context.getProperty(PROP_DISTRIBUTED_CACHE_SERVICE).asControllerService(DistributedMapCacheClient.class);
         final DistributedMapCacheClient XsdMapCacheLookupClient = context.getProperty(PROP_XSDMAP_CACHE_SERVICE).asControllerService(DistributedMapCacheClient.class);
@@ -245,32 +316,70 @@ public class IFlow extends AbstractProcessor {
 
 
         try {
-            ControllerService iflowCacheMap = getServiceController(iflowMapCacheLookupClientName, context);
-            var xsdCacheMap = getServiceController(xsdMapCacheLookupClientName, context);
-            var xsltCacheMap = getServiceController(xsltMapCacheLookupClientName, context);
+//            ControllerService iflowCacheMap = getServiceController(iflowMapCacheLookupClientName, context);
+//            var xsdCacheMap = getServiceController(xsdMapCacheLookupClientName, context);
+//            ControllerService xsltCacheMap = getServiceController(xsltMapCacheLookupClientName, context);
 
-            String ret = iflowCacheMap.get(flowFile.getAttribute("business.process.name"),
-                    new Serializer<String>(){
+            final Map<String, String> cacheValues;
+            final boolean singleKey = cacheKeys.size() == 1;
+            if (singleKey) {
+                cacheValues = new HashMap<>(1);
+                cacheValues.put(cacheKeys.get(0), IflowMapCacheLookupClient.get(cacheKey, keySerializer, valueDeserializer));
+            } else {
+                cacheValues = IflowMapCacheLookupClient.subMap(new HashSet<>(cacheKeys), keySerializer, valueDeserializer);
+            }
+            boolean notFound = false;
+            for (Map.Entry<String, String> cacheValueEntry : cacheValues.entrySet()) {
+                final String cacheValue = cacheValueEntry.getValue();
 
-                        @Override
-                        public void serialize(final String value, final OutputStream out) throws SerializationException, IOException {
-                            out.write(value.getBytes(StandardCharsets.UTF_8));
+                if (cacheValue == null) {
+                    logger.info("Could not find an entry in cache for {}; routing to not-found", new Object[]{flowFile});
+                    notFound = true;
+                    break;
+                } else {
+                    boolean putInAttribute = context.getProperty(PROP_PUT_CACHE_VALUE_IN_ATTRIBUTE).isSet();
+                    if (putInAttribute) {
+                        String attributeName = context.getProperty(PROP_PUT_CACHE_VALUE_IN_ATTRIBUTE).evaluateAttributeExpressions(flowFile).getValue();
+                        if (!singleKey) {
+                            // Append key to attribute name if multiple keys
+                            attributeName += "." + cacheValueEntry.getKey();
+                        }
+                        //todo перепроверить
+                        String attributeValue = new String(cacheValue.getBytes(), context.getProperty(PROP_CHARACTER_SET).getValue());
+
+                        int maxLength = context.getProperty(PROP_PUT_ATTRIBUTE_MAX_LENGTH).asInteger();
+                        if (maxLength < attributeValue.length()) {
+                            attributeValue = attributeValue.substring(0, maxLength);
                         }
 
-                    },
-                    new Deserializer<String>(){
+                        flowFile = session.putAttribute(flowFile, attributeName, attributeValue);
 
-                        @Override
-                        public String deserialize(final byte[] value) throws DeserializationException, IOException {
-                            if (value == null) {
-                                return null;
-                            }
-                            return new String(value, StandardCharsets.UTF_8);
+                    } else if (cacheKeys.size() > 1) {
+                        throw new IOException("Multiple Cache Value Identifiers specified without Put Cache Value In Attribute set");
+                    } else {
+                        // Write single value to content
+                        flowFile = session.write(flowFile, out -> out.write(cacheValue.getBytes()));
+                    }
 
-                        }});
+                    if (putInAttribute) {
+                        logger.info("Found a cache key of {} and added an attribute to {} with it's value.", new Object[]{cacheKey, flowFile});
+                    } else {
+                        logger.info("Found a cache key of {} and replaced the contents of {} with it's value.", new Object[]{cacheKey, flowFile});
+                    }
+                }
+            }
+            // If the loop was exited because a cache entry was not found, route to REL_NOT_FOUND; otherwise route to REL_SUCCESS
+            if (notFound) {
+                session.transfer(flowFile, Failure);
+            } else {
+                session.transfer(flowFile, Load);
+            }
+
+
+            String ret = cacheValues.get(flowFile.getAttribute("business.process.name"));
             if (ret != null) {
                 trace("iFlow not found, return 501");
-                logger.error( "iFlow named:" + flowFile.getAttribute("business.process.name") + "not found!");
+                logger.error("iFlow named:" + flowFile.getAttribute("business.process.name") + "not found!");
                 session.putAttribute(flowFile, "iflow.error", "iFlow named:" + flowFile.getAttribute("business.process.name") + "not found!");
                 session.putAttribute(flowFile, "iflow.status.code", getResponse("", "501"));
                 session.transfer(flowFile, Failure);
@@ -304,7 +413,7 @@ public class IFlow extends AbstractProcessor {
                     int xformPath = Integer.parseInt(flowFile.getAttribute("xform.path"));
 
                     if (xformPath > -1 & xformPath < xforms.length()) {
-                        if (target.get("output") =="JSON") {
+                        if (target.get("output") == "JSON") {
                             session.putAttribute(flowFile, "target.output", "JSON");
                         }
                         var xform = xforms.get(xformPath);
@@ -321,7 +430,7 @@ public class IFlow extends AbstractProcessor {
                         throw new Exception("Incorrect transformation path " + xformPath);
                     }
                 } catch (Exception ex1) {
-                    trace("!!!!!!!Exception:"  + ex1.toString());
+                    trace("!!!!!!!Exception:" + ex1.toString());
 
                     String exMsgBldr = "Exception" + ex1 + "occurs" +
                             " while processing FlowFile" + flowFile.getAttribute("filename") +
@@ -348,7 +457,7 @@ public class IFlow extends AbstractProcessor {
                 boolean isFailedSchemaExtraction = false;
                 try {
                     schemaContent = xsdCacheMap.get(iflow.validate,
-                            new Serializer<String>(){
+                            new Serializer<String>() {
 
                                 @Override
                                 public void serialize(final String value, final OutputStream out) throws SerializationException, IOException {
@@ -356,7 +465,7 @@ public class IFlow extends AbstractProcessor {
                                 }
 
                             },
-                            new Deserializer<String>(){
+                            new Deserializer<String>() {
 
                                 @Override
                                 public String deserialize(final byte[] value) throws DeserializationException, IOException {
@@ -365,9 +474,10 @@ public class IFlow extends AbstractProcessor {
                                     }
                                     return new String(value, StandardCharsets.UTF_8);
 
-                                }});
+                                }
+                            });
                     if (schemaContent == null) {
-                        throw new IOException("Schema with name" + iflow.validate +  "not found");
+                        throw new IOException("Schema with name" + iflow.get("validate") + "not found");
                     }
                 } catch (Exception e) {
                     //todo Мб вынести в отдельный метод?
@@ -403,16 +513,17 @@ public class IFlow extends AbstractProcessor {
                 ProvenanceReporter reporter = session.getProvenanceReporter();
 
 
-                targets.eachWithIndex { it, flowIndex ->
-                        ArrayList xforms = it.transformations as ArrayList;
+                targets.eachWithIndex {
+                    it, flowIndex ->
+                            ArrayList xforms = it.transformations as ArrayList;
                     //Make a copy of incoming flow file for each target system
                     //Or use the incoming flowfile for last target
                     //FlowFile file = flowIndex < numOfTargets - 1 & numOfTargets > 1 ? session.clone(flowFile) : flowFile
                     FlowFile file = null;
-                    if(flowIndex < numOfTargets - 1 & numOfTargets > 1){
+                    if (flowIndex < numOfTargets - 1 & numOfTargets > 1) {
                         file = session.clone(flowFile);
                         reporter.clone(flowFile, file);
-                    } else{
+                    } else {
                         file = flowFile;
                     }
                     session.putAttribute(file, "Receiver", it.id);
@@ -434,7 +545,7 @@ public class IFlow extends AbstractProcessor {
                             session.putAttribute(file, "xform.path", String.valueOf(xformPath));
                             f = xformPath < xforms.size() - 1 & xforms.size() > 1 ? session.clone(file) : file;
 
-                            def result = processXform(context, session,f, xform, it.id);
+                            def result = processXform(context, session, f, xform, it.id);
                             reporter.modifyContent(f);
                             if (result == null) {
                                 session.remove(f);
@@ -485,7 +596,7 @@ public class IFlow extends AbstractProcessor {
             FlowFile flowFile,
             ArrayList<JSONObject> xforms,
             String targetId
-    ) throws Exception{
+    ) throws Exception {
         boolean isFlowFileSuppressed = false;
         int prevStageIndx = -1;
 
@@ -539,10 +650,10 @@ public class IFlow extends AbstractProcessor {
                 PropertyValue propValue;
                 String param;
                 switch (name) {
-                    case("SyncResponse"):
+                    case ("SyncResponse"):
                         syncResponse(session, flowFile);
                         break;
-                    case("RouteOnContent"):
+                    case ("RouteOnContent"):
                         //Have to transfer a flow file to the special RouteOnContent processor group
                         param = params.get("MatchRequirement");
 //                        if (!param) throw new IllegalArgumentException(name + ' ' + param);
@@ -561,7 +672,7 @@ public class IFlow extends AbstractProcessor {
                         session.putAttribute(flowFile, "xform.group", "RouteOnContent");
                         isPropagated = true;
                         break;
-                    case("UpdateAttribute"):
+                    case ("UpdateAttribute"):
                         //We have to support the Nifi EL in attributes
                         //So create temp hidden property to provide EL capabilities
                         for (Map.Entry<String, String> entry : params.entrySet()) {
@@ -570,7 +681,7 @@ public class IFlow extends AbstractProcessor {
                             flowFile = session.putAttribute(flowFile, entry.getKey(), attrValue);
                         }
                         break;
-                    case("RouteOnAttribute"):
+                    case ("RouteOnAttribute"):
                         param = params.get("RoutingStrategy");
 //                        if (!param) throw new IllegalArgumentException(name + ' ' + param);
                         checkParam(param, name);
@@ -584,7 +695,7 @@ public class IFlow extends AbstractProcessor {
                             //был в изначальном скрипте: throw new Exception('Result ' + res + ' does not match condition')
                         }
                         break;
-                    case("ReplaceText"):
+                    case ("ReplaceText"):
                         //Have to transfer a flow file to the special ReplaceText processor group
                         //TODO не совсем понятно про param здесь, в исходном скрипте он подсвечем серым
                         //TODO Имелось в виду replacementStrategy вместо param или так и задуманно?
@@ -608,7 +719,7 @@ public class IFlow extends AbstractProcessor {
                         flowFile = replaceText(session, flowFile, replacementStrategy, searchValue,
                                 replacementValue, "EntireText", StandardCharsets.UTF_8, fileSize);
                         break;
-                    case("EvaluateXQuery"):
+                    case ("EvaluateXQuery"):
                         param = params.get("Destination");
                         if (!param.equals("flowfile-attribute")) {
                             throw new IllegalArgumentException(name + ' ' + param);
@@ -620,10 +731,10 @@ public class IFlow extends AbstractProcessor {
                             if (paramEntry.getValue().indexOf("count(") > -1) {
                                 trace("+count");
                                 final StringBuilder sb = new StringBuilder();
-                                session.read(flowFile, new InputStreamCallback(){
+                                session.read(flowFile, new InputStreamCallback() {
 
                                     @Override
-                                    public void process(InputStream is) throws IOException{
+                                    public void process(InputStream is) throws IOException {
                                         var r = evaluateXPathValue(is,
                                                 paramEntry.getValue().replace("\\\\", "\\"));
                                         sb.append(r);
@@ -635,10 +746,10 @@ public class IFlow extends AbstractProcessor {
                                 //final ByteArrayOutputStream baos = new ByteArrayOutputStream()
                                 final List<String> list = new ArrayList<>();
 
-                                session.read(flowFile, new InputStreamCallback(){
+                                session.read(flowFile, new InputStreamCallback() {
 
                                     @Override
-                                    public void process(InputStream is) throws IOException{
+                                    public void process(InputStream is) throws IOException {
                                         List<String> nodes = null;
                                         try {
                                             nodes = evaluateXPath(is,
@@ -663,7 +774,7 @@ public class IFlow extends AbstractProcessor {
                                     //todo s - > str
                                     for (String str : list) {
                                         String attrName = paramEntry.getKey() + '.' + sfx;
-                                        trace1("EvalXq res" +  attrName + " " + str);
+                                        trace1("EvalXq res" + attrName + " " + str);
                                         session.putAttribute(flowFile, attrName, str);
                                         sfx++;
                                     }
@@ -673,14 +784,14 @@ public class IFlow extends AbstractProcessor {
                             //String r = Arrays.toString(res)
                         }
                         break;
-                    case("ApplyXslt"):
+                    case ("ApplyXslt"):
                         final String parameter = params.get("Name");
                         checkParam(parameter, name);
 //                        if (!param) throw new IllegalArgumentException(name + ' ' + param);
-                        flowFile = session.write(flowFile, new StreamCallback(){
+                        flowFile = session.write(flowFile, new StreamCallback() {
 
                             @Override
-                            public void process(InputStream is, OutputStream os) throws IOException{
+                            public void process(InputStream is, OutputStream os) throws IOException {
                                 try {
                                     applyXslt(is, os, parameter);
                                 } catch (TransformerException e) {
@@ -691,7 +802,7 @@ public class IFlow extends AbstractProcessor {
 
                         });
                         break;
-                    case("DuplicateFlowFile"):
+                    case ("DuplicateFlowFile"):
                         param = params.get("Number");
                         checkParam(param, name);
 //                        if (param == null) {
@@ -713,7 +824,7 @@ public class IFlow extends AbstractProcessor {
                         for (int j = 0; j < numOfCopies; j++) {
                             f = session.clone(flowFile);
                             session.putAttribute(flowFile, "copy.index", String.valueOf(j + 1));
-                            graylogNotifyStart(f, ffid);
+                            graylogNotifyStart(context, f, ffid);
                             FlowFile ff = null;
                             if (currStageIndx < xforms.size() - 1) {
                                 ff = processXform(context, session, f, xforms, targetId);
@@ -743,7 +854,7 @@ public class IFlow extends AbstractProcessor {
                         session.putAttribute(flowFile, "xform.group", name);
                         break;
                 }
-                graylogNotify(flowFile, name);
+                graylogNotify(context, flowFile, name);
             }
             if (isPropagated) {
                 break;
@@ -769,8 +880,10 @@ public class IFlow extends AbstractProcessor {
         return flowFile;
     }
 
-    /**Не до конца понимает, что должно вернуть**/
-    private ControllerService getServiceController (final String name, final ProcessContext context){
+    /**
+     * Не до конца понимает, что должно вернуть
+     **/
+    private ControllerService getServiceController(final String name, final ProcessContext context) {
         trace(String.format("get service controller: %s", name));
         ControllerServiceLookup lookup = context.getControllerServiceLookup();
         String serviceId = lookup.getControllerServiceIdentifiers(ControllerService.class)
@@ -800,7 +913,7 @@ public class IFlow extends AbstractProcessor {
     }
 
     //Не уверен в правильности из-за кучи try catch
-    public Object evaluateXPathValue(InputStream inputStream, String xpathQuery){
+    public Object evaluateXPathValue(InputStream inputStream, String xpathQuery) {
         Element records = null;
         try {
             records = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(inputStream).getDocumentElement();
@@ -818,7 +931,7 @@ public class IFlow extends AbstractProcessor {
     }
 
     //Вроде норм, но надо будет потестить
-    private String stream2string (InputStream inputStream) throws IOException {
+    private String stream2string(InputStream inputStream) throws IOException {
         ByteArrayOutputStream result = new ByteArrayOutputStream();
         byte[] buffer = new byte[1024];
         for (int length; (length = inputStream.read(buffer)) != -1; ) {
@@ -833,7 +946,7 @@ public class IFlow extends AbstractProcessor {
     }
 
     //Вроде норм, но надо будет потестить
-    private byte[] stream2byteArray (InputStream inputStream) throws IOException {
+    private byte[] stream2byteArray(InputStream inputStream) throws IOException {
         ByteArrayOutputStream result = new ByteArrayOutputStream();
         byte[] buffer = new byte[1024];
         for (int length; (length = inputStream.read(buffer)) != -1; ) {
@@ -843,20 +956,19 @@ public class IFlow extends AbstractProcessor {
     }
 
     //Сделано не как в груви, но должно работать
-    private String xml2Json(String xml){
+    private String xml2Json(String xml) {
         JSONObject jsonObj = XML.toJSONObject(xml);
         String json = jsonObj.toString();
         return json;
     }
 
 
-
     public void trace(String message) {
-        traceOut += String.format("\r\n+++++++ %s +++++++:%d",traceCount, message);
+        traceOut += String.format("\r\n+++++++ %s +++++++:%d", traceCount, message);
     }
 
     private void trace1(String message) {
-        traceOut1 += String.format("\r\n+++++++ %s +++++++:%d",traceCount1, message);
+        traceOut1 += String.format("\r\n+++++++ %s +++++++:%d", traceCount1, message);
     }
 
     private String getResponse(String protocol, String code) {
@@ -874,7 +986,7 @@ public class IFlow extends AbstractProcessor {
         JSONObject target;
         for (int i = 0; i < targets.length(); i++) {
             target = targets.getJSONObject(i);
-            if(target.get("id") == id) {
+            if (target.get("id") == id) {
                 return i;
             }
         }
@@ -898,11 +1010,11 @@ public class IFlow extends AbstractProcessor {
         return params;
     }
 
-    private FlowFile convertFlowFile(final ProcessSession session, FlowFile flowFile) throws Exception{
-        flowFile = session.write(flowFile, new StreamCallback(){
+    private FlowFile convertFlowFile(final ProcessSession session, FlowFile flowFile) throws Exception {
+        flowFile = session.write(flowFile, new StreamCallback() {
 
             @Override
-            public void process(InputStream is, OutputStream os) throws IOException{
+            public void process(InputStream is, OutputStream os) throws IOException {
                 byte[] content = stream2byteArray(is);
                 trace("Len " + content.length);
                 String json = xml2Json(new String(content));
@@ -922,14 +1034,14 @@ public class IFlow extends AbstractProcessor {
         return flowFile;
     }
 
-    void applyXslt(InputStream flowFileContent, OutputStream os, String transformName) throws IOException, IllegalArgumentException, TransformerException {
+    void applyXslt(ControllerService xsltCacheMap, InputStream flowFileContent, OutputStream os, String transformName) throws IOException, IllegalArgumentException, TransformerException {
         if (transformName == null) {
-            throw new IOException("XSLT with the name ${transformName} not found");
+            throw new IOException("XSLT with the name" + transformName + "not found");
         }
-        trace("apply xslt transform: ${transformName}");
+        trace("apply xslt transform: " + transformName);
 
         String xslt = xsltCacheMap.get(transformName,
-                new Serializer<String>(){
+                new Serializer<String>() {
 
                     @Override
                     public void serialize(final String value, final OutputStream out) throws SerializationException, IOException {
@@ -937,7 +1049,7 @@ public class IFlow extends AbstractProcessor {
                     }
 
                 },
-                new Deserializer<String>(){
+                new Deserializer<String>() {
 
                     @Override
                     public String deserialize(final byte[] value) throws DeserializationException, IOException {
@@ -969,7 +1081,7 @@ public class IFlow extends AbstractProcessor {
         }
         Writer writer = new OutputStreamWriter(os);
 
-        StreamResult strmres =  new StreamResult(writer);
+        StreamResult strmres = new StreamResult(writer);
 
         transformer.transform(new StreamSource(flowFileContent), strmres);
     }
@@ -982,7 +1094,7 @@ public class IFlow extends AbstractProcessor {
             Object result,
             boolean sync,
             List urlList,
-            JSONObject config) throws Exception{
+            JSONObject config) throws Exception {
         int urlListSize = urlList.size();
         trace("Medved");
 
@@ -995,7 +1107,8 @@ public class IFlow extends AbstractProcessor {
             FlowFile file = (FlowFile) result;
             file = postprocessXform(context, session, file, sync, config);
             trace("After postprocess");
-            urlList.eachWithIndex { j, index ->
+            urlList.eachWithIndex {
+                j, index ->
                 if (index < urlListSize - 1 & urlListSize > 1) {
                     FlowFile f = session.clone(file);
                     session.putAttribute(f, "target_url", String.valueOf(j));
@@ -1019,7 +1132,8 @@ public class IFlow extends AbstractProcessor {
                 }
                 FlowFile f1 = postprocessXform(context, session, f, sync, config);
 
-                urlList.eachWithIndex { j, index ->
+                urlList.eachWithIndex {
+                    j, index ->
                     if (index < urlListSize - 1 & urlListSize > 1) {
                         FlowFile fc = session.clone(f1);
                         session.putAttribute(fc, "target_url", String.valueOf(j));
@@ -1066,7 +1180,7 @@ public class IFlow extends AbstractProcessor {
     }
 
     //TODO проверить ошибки, т.к. скопировано с груви
-    private void graylogNotify(ProcessContext context, FlowFile flowFile, String xformEntity) throws Exception{
+    private void graylogNotify(ProcessContext context, FlowFile flowFile, String xformEntity) throws Exception {
         String sender = flowFile.getAttribute("http.query.param.senderService");
         if (sender == null) {
             sender = "Не указан";
@@ -1143,7 +1257,7 @@ public class IFlow extends AbstractProcessor {
         map.put("transformationPath", xformPath);
         map.put("transformationStage", xformStage);
 
-       String json = groovy.json.JsonOutput.toJson(map);
+        String json = groovy.json.JsonOutput.toJson(map);
         //Отправка GELF-сообщения
         sendGELFMessage(json);
 //        URL url = new URL ("http://1tesb-s-grl01.gk.rosatom.local:12001/gelf");
@@ -1159,7 +1273,11 @@ public class IFlow extends AbstractProcessor {
     }
 
     //Todo Разобраться с receiverServiceId.asControllerService опять..
-    private void graylogNotifyStart(final ProcessContext context, FlowFile flowFile, String derivationId) throws Exception{
+    private void graylogNotifyStart(
+            final ProcessContext context,
+            FlowFile flowFile,
+            String derivationId
+    ) throws Exception {
         String sender = flowFile.getAttribute("http.query.param.senderService");
         if (sender == null) {
             sender = "Не указан";
@@ -1240,8 +1358,8 @@ public class IFlow extends AbstractProcessor {
     }
 
     private void sendGELFMessage(String msg) throws Exception {
-        URL url = new URL (gelfURL);
-        HttpURLConnection post = (HttpURLConnection)url.openConnection();
+        URL url = new URL(gelfURL);
+        HttpURLConnection post = (HttpURLConnection) url.openConnection();
         post.setRequestMethod("POST");
         post.setDoOutput(true);
         post.setRequestProperty("Content-Type", "application/json");
@@ -1338,7 +1456,7 @@ public class IFlow extends AbstractProcessor {
             final String evaluateMode,
             final Charset charset,
             final int maxBufferSize
-    ) throws Exception{
+    ) throws Exception {
         if (type.equals("RegexReplace")) {
             return regexReplaceText(session, flowFile, searchValue, replacementValue, evaluateMode, charset, maxBufferSize);
         } else {
@@ -1365,4 +1483,24 @@ public class IFlow extends AbstractProcessor {
         session.transfer(syncResponseFile, Transform);
     }
 
+    public static class CacheValueDeserializer implements Deserializer<String> {
+
+        @Override
+        public String deserialize(final byte[] value) throws DeserializationException, IOException {
+            if (value == null) {
+                return null;
+            }
+            return new String(value, StandardCharsets.UTF_8);
+
+        }
+    }
+
+    public static class StringSerializer implements Serializer<String> {
+
+        @Override
+        public void serialize(final String value, final OutputStream out) throws SerializationException, IOException {
+            out.write(value.getBytes(StandardCharsets.UTF_8));
+        }
+
+    }
 }
