@@ -1380,6 +1380,7 @@ public class IFlow extends AbstractProcessor {
     ) throws Exception {
         final int numCapturingGroups = Pattern.compile(searchValue).matcher("").groupCount();
         //final AttributeValueDecorator quotedAttributeDecorator = Pattern::quote
+        //
 
         final String searchRegex = searchValue;
         final Pattern searchPattern = Pattern.compile(searchRegex);
