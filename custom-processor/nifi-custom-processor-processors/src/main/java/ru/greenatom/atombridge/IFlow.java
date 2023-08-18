@@ -16,8 +16,6 @@
  */
 package ru.greenatom.atombridge;
 
-import groovy.json.internal.Cache;
-import groovy.util.XmlParser;
 import org.apache.nifi.annotation.behavior.*;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.controller.ControllerService;
@@ -45,15 +43,11 @@ import java.io.StringReader;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.URL;
-import java.net.URLConnection;
 import java.util.*;
 
 //Импорты из груви скрипта
-import org.apache.nifi.flowfile.FlowFile;
-import org.apache.nifi.processor.ProcessSession;
 import org.apache.nifi.processor.io.OutputStreamCallback;
 import org.apache.nifi.processor.io.StreamCallback;
-import org.apache.nifi.serialization.record.Record;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.ParserConfigurationException;
@@ -80,17 +74,13 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 
 import org.apache.nifi.components.PropertyValue;
-import org.apache.nifi.lookup.LookupService;
 import org.apache.nifi.lookup.StringLookupService;
 
 import javax.xml.XMLConstants;
 import javax.xml.transform.Source;
-import javax.xml.transform.stream.StreamSource;
 import javax.xml.validation.*;
 
 import org.apache.nifi.util.StringUtils;
-import org.codehaus.groovy.ant.Groovy;
-import org.codehaus.groovy.runtime.DefaultGroovyMethods;
 import org.json.XML;
 import org.w3c.dom.Element;
 import org.json.JSONArray;
@@ -103,15 +93,10 @@ import java.nio.charset.Charset;
 
 import org.apache.nifi.stream.io.StreamUtils;
 
-import groovy.lang.Binding;
-import java.util.logging.Logger;
-
 import static org.codehaus.groovy.tools.xml.DomToGroovy.parse;
 
 import org.w3c.dom.*;
 
-import javax.xml.xpath.*;
-import javax.xml.parsers.*;
 import java.io.*;
 import java.util.ArrayList;
 import java.util.List;
@@ -171,7 +156,7 @@ public class IFlow extends AbstractProcessor {
             .identifiesControllerService(DistributedMapCacheClient.class)
             .build();
 
-    public static final PropertyDescriptor PROP_CACHE_ENTRY_IDENTIFIER = new PropertyDescriptor.Builder()
+    public static final PropertyDescriptor PROP_IFLOW_CACHE_ENTRY_IDENTIFIER = new PropertyDescriptor.Builder()
             .name("Cache Entry Identifier")
             .description("A comma-delimited list of FlowFile attributes, or the results of Attribute Expression Language statements, which will be evaluated "
                     + "against a FlowFile in order to determine the value(s) used to identify duplicates; it is these values that are cached. NOTE: Only a single "
@@ -182,6 +167,31 @@ public class IFlow extends AbstractProcessor {
             .defaultValue("${hash.value}")
             .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
             .build();
+
+    public static final PropertyDescriptor PROP_XSD_CACHE_ENTRY_IDENTIFIER = new PropertyDescriptor.Builder()
+            .name("Cache Entry Identifier")
+            .description("A comma-delimited list of FlowFile attributes, or the results of Attribute Expression Language statements, which will be evaluated "
+                    + "against a FlowFile in order to determine the value(s) used to identify duplicates; it is these values that are cached. NOTE: Only a single "
+                    + "Cache Entry Identifier is allowed unless Put Cache Value In Attribute is specified. Multiple cache lookups are only supported when the destination "
+                    + "is a set of attributes (see the documentation for 'Put Cache Value In Attribute' for more details including naming convention.")
+            .required(true)
+            .addValidator(StandardValidators.createAttributeExpressionLanguageValidator(AttributeExpression.ResultType.STRING, true))
+            .defaultValue("${hash.value}")
+            .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
+            .build();
+
+    public static final PropertyDescriptor PROP_XSL_CACHE_ENTRY_IDENTIFIER = new PropertyDescriptor.Builder()
+            .name("Cache Entry Identifier")
+            .description("A comma-delimited list of FlowFile attributes, or the results of Attribute Expression Language statements, which will be evaluated "
+                    + "against a FlowFile in order to determine the value(s) used to identify duplicates; it is these values that are cached. NOTE: Only a single "
+                    + "Cache Entry Identifier is allowed unless Put Cache Value In Attribute is specified. Multiple cache lookups are only supported when the destination "
+                    + "is a set of attributes (see the documentation for 'Put Cache Value In Attribute' for more details including naming convention.")
+            .required(true)
+            .addValidator(StandardValidators.createAttributeExpressionLanguageValidator(AttributeExpression.ResultType.STRING, true))
+            .defaultValue("${hash.value}")
+            .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
+            .build();
+
 
     public static final PropertyDescriptor PROP_CHARACTER_SET = new PropertyDescriptor.Builder()
             .name("Character Set")
@@ -282,17 +292,30 @@ public class IFlow extends AbstractProcessor {
         }
 
         final ComponentLog logger = getLogger();
-        final String cacheKey = context.getProperty(PROP_CACHE_ENTRY_IDENTIFIER).evaluateAttributeExpressions(flowFile).getValue();
+        final String iFlowCacheKey = context.getProperty(PROP_IFLOW_CACHE_ENTRY_IDENTIFIER).evaluateAttributeExpressions(flowFile).getValue();
+        final String xsdCacheKey = context.getProperty(PROP_XSD_CACHE_ENTRY_IDENTIFIER).evaluateAttributeExpressions(flowFile).getValue();
+        final String xslCacheKey = context.getProperty(PROP_XSL_CACHE_ENTRY_IDENTIFIER).evaluateAttributeExpressions(flowFile).getValue();
+
+
         // This block retains the previous behavior when only one Cache Entry Identifier was allowed, so as not to change the expected error message
-        if (StringUtils.isBlank(cacheKey)) {
-            logger.error("FlowFile {} has no attribute for given Cache Entry Identifier", new Object[]{flowFile});
-            flowFile = session.penalize(flowFile);
-            session.transfer(flowFile, Failure);
+
+        List<String> iflowCacheKeys = new ArrayList<>();
+        List<String> xsdCacheKeys = new ArrayList<>();
+        List<String> xslCacheKeys = new ArrayList<>();
+
+//        initKeyList(session, flowFile, iflowCacheKeys,  iFlowCacheKey);
+//        initKeyList(session, flowFile, xsdCacheKeys,  xsdCacheKey);
+//        initKeyList(session, flowFile, xslCacheKeys,  xslCacheKey);
+
+        if (!initKeyList(session, flowFile, iflowCacheKeys,  iFlowCacheKey)) {
             return;
         }
-        List<String> cacheKeys = new ArrayList<>();
-        initKeyList(session, flowFile, cacheKeys,  cacheKey);
-
+        if (!initKeyList(session, flowFile, xsdCacheKeys,  xsdCacheKey)) {
+            return;
+        }
+        if (!initKeyList(session, flowFile, xslCacheKeys,  xslCacheKey)) {
+            return;
+        }
 
         final DistributedMapCacheClient IflowMapCacheLookupClient = context.getProperty(PROP_DISTRIBUTED_CACHE_SERVICE).asControllerService(DistributedMapCacheClient.class);
         final DistributedMapCacheClient XsdMapCacheLookupClient = context.getProperty(PROP_XSDMAP_CACHE_SERVICE).asControllerService(DistributedMapCacheClient.class);
@@ -312,7 +335,7 @@ public class IFlow extends AbstractProcessor {
 //            ControllerService xsltCacheMap = getServiceController(xsltMapCacheLookupClientName, context);
 
             final Map<String, String> iflowCacheMap = new HashMap<>(1);
-            setMap(session, context, flowFile, iflowCacheMap, cacheKeys, cacheKey, IflowMapCacheLookupClient);
+            setMap(session, context, flowFile, iflowCacheMap, iflowCacheKeys, iFlowCacheKey, IflowMapCacheLookupClient);
 
 
             String ret = iflowCacheMap.get(flowFile.getAttribute("business.process.name"));
@@ -1486,7 +1509,7 @@ public class IFlow extends AbstractProcessor {
         }
     }
 
-    private void initKeyList(
+    private boolean initKeyList(
             final ProcessSession session,
             FlowFile flowFile,
             List<String> cacheKeys,
@@ -1494,14 +1517,25 @@ public class IFlow extends AbstractProcessor {
     ) {
         cacheKeys = Arrays.stream(cacheKey.split(",")).filter(path -> !StringUtils.isEmpty(path)).map(String::trim).collect(Collectors.toList());
         for (int i = 0; i < cacheKeys.size(); i++) {
-            if (StringUtils.isBlank(cacheKeys.get(i))) {
-                // Log first missing identifier, route to failure, and return
-                logger.error("FlowFile {} has no attribute for Cache Entry Identifier in position {}", new Object[]{flowFile, i});
-                flowFile = session.penalize(flowFile);
-                session.transfer(flowFile, Failure);
-                return;
+            if (!validateKey(session, flowFile, cacheKeys.get(i))) {
+                return false;
             }
         }
+        return true;
+    }
+
+    private boolean validateKey(
+            final ProcessSession session,
+            FlowFile flowFile,
+            String key
+    ) {
+        if (StringUtils.isBlank(key)) {
+            logger.error("FlowFile {} has no attribute for given Cache Entry Identifier", new Object[]{flowFile});
+            flowFile = session.penalize(flowFile);
+            session.transfer(flowFile, Failure);
+            return false;
+        }
+        return true;
     }
 
 
