@@ -290,16 +290,8 @@ public class IFlow extends AbstractProcessor {
             session.transfer(flowFile, Failure);
             return;
         }
-        List<String> cacheKeys = Arrays.stream(cacheKey.split(",")).filter(path -> !StringUtils.isEmpty(path)).map(String::trim).collect(Collectors.toList());
-        for (int i = 0; i < cacheKeys.size(); i++) {
-            if (StringUtils.isBlank(cacheKeys.get(i))) {
-                // Log first missing identifier, route to failure, and return
-                logger.error("FlowFile {} has no attribute for Cache Entry Identifier in position {}", new Object[]{flowFile, i});
-                flowFile = session.penalize(flowFile);
-                session.transfer(flowFile, Failure);
-                return;
-            }
-        }
+        List<String> cacheKeys = new ArrayList<>();
+        initKeyList(session, flowFile, cacheKeys,  cacheKey);
 
 
         final DistributedMapCacheClient IflowMapCacheLookupClient = context.getProperty(PROP_DISTRIBUTED_CACHE_SERVICE).asControllerService(DistributedMapCacheClient.class);
@@ -319,63 +311,11 @@ public class IFlow extends AbstractProcessor {
 //            var xsdCacheMap = getServiceController(xsdMapCacheLookupClientName, context);
 //            ControllerService xsltCacheMap = getServiceController(xsltMapCacheLookupClientName, context);
 
-            final Map<String, String> cacheValues;
-            final boolean singleKey = cacheKeys.size() == 1;
-            if (singleKey) {
-                cacheValues = new HashMap<>(1);
-                cacheValues.put(cacheKeys.get(0), IflowMapCacheLookupClient.get(cacheKey, keySerializer, valueDeserializer));
-            } else {
-                cacheValues = IflowMapCacheLookupClient.subMap(new HashSet<>(cacheKeys), keySerializer, valueDeserializer);
-            }
-            boolean notFound = false;
-            for (Map.Entry<String, String> cacheValueEntry : cacheValues.entrySet()) {
-                final String cacheValue = cacheValueEntry.getValue();
-
-                if (cacheValue == null) {
-                    logger.info("Could not find an entry in cache for {}; routing to not-found", new Object[]{flowFile});
-                    notFound = true;
-                    break;
-                } else {
-                    boolean putInAttribute = context.getProperty(PROP_PUT_CACHE_VALUE_IN_ATTRIBUTE).isSet();
-                    if (putInAttribute) {
-                        String attributeName = context.getProperty(PROP_PUT_CACHE_VALUE_IN_ATTRIBUTE).evaluateAttributeExpressions(flowFile).getValue();
-                        if (!singleKey) {
-                            // Append key to attribute name if multiple keys
-                            attributeName += "." + cacheValueEntry.getKey();
-                        }
-                        //todo перепроверить
-                        String attributeValue = new String(cacheValue.getBytes(), context.getProperty(PROP_CHARACTER_SET).getValue());
-
-                        int maxLength = context.getProperty(PROP_PUT_ATTRIBUTE_MAX_LENGTH).asInteger();
-                        if (maxLength < attributeValue.length()) {
-                            attributeValue = attributeValue.substring(0, maxLength);
-                        }
-
-                        flowFile = session.putAttribute(flowFile, attributeName, attributeValue);
-
-                    } else if (cacheKeys.size() > 1) {
-                        throw new IOException("Multiple Cache Value Identifiers specified without Put Cache Value In Attribute set");
-                    } else {
-                        // Write single value to content
-                        flowFile = session.write(flowFile, out -> out.write(cacheValue.getBytes()));
-                    }
-
-                    if (putInAttribute) {
-                        logger.info("Found a cache key of {} and added an attribute to {} with it's value.", new Object[]{cacheKey, flowFile});
-                    } else {
-                        logger.info("Found a cache key of {} and replaced the contents of {} with it's value.", new Object[]{cacheKey, flowFile});
-                    }
-                }
-            }
-            // If the loop was exited because a cache entry was not found, route to REL_NOT_FOUND; otherwise route to REL_SUCCESS
-            if (notFound) {
-                session.transfer(flowFile, Failure);
-            } else {
-                session.transfer(flowFile, Load);
-            }
+            final Map<String, String> iflowCacheMap = new HashMap<>(1);
+            setMap(session, context, flowFile, iflowCacheMap, cacheKeys, cacheKey, IflowMapCacheLookupClient);
 
 
-            String ret = cacheValues.get(flowFile.getAttribute("business.process.name"));
+            String ret = iflowCacheMap.get(flowFile.getAttribute("business.process.name"));
             if (ret != null) {
                 trace("iFlow not found, return 501");
                 logger.error("iFlow named:" + flowFile.getAttribute("business.process.name") + "not found!");
@@ -1482,6 +1422,88 @@ public class IFlow extends AbstractProcessor {
         //todo Тут было отношение REL_SUCCESS
         session.transfer(syncResponseFile, Transform);
     }
+
+    private void setMap(
+            final ProcessSession session,
+            final ProcessContext context,
+            FlowFile flowFile,
+            Map<String, String> casheMap,
+            List<String> cacheKeys,
+            String cacheKey,
+            DistributedMapCacheClient mapCacheLookupClient
+    ) throws IOException {
+        final boolean singleKey = cacheKeys.size() == 1;
+        if (singleKey) {
+            casheMap.put(cacheKeys.get(0), mapCacheLookupClient.get(cacheKey, keySerializer, valueDeserializer));
+        } else {
+            casheMap = mapCacheLookupClient.subMap(new HashSet<>(cacheKeys), keySerializer, valueDeserializer);
+        }
+        boolean notFound = false;
+        for (Map.Entry<String, String> cacheValueEntry : casheMap.entrySet()) {
+            final String cacheValue = cacheValueEntry.getValue();
+
+            if (cacheValue == null) {
+                logger.info("Could not find an entry in cache for {}; routing to not-found", new Object[]{flowFile});
+                notFound = true;
+                break;
+            } else {
+                boolean putInAttribute = context.getProperty(PROP_PUT_CACHE_VALUE_IN_ATTRIBUTE).isSet();
+                if (putInAttribute) {
+                    String attributeName = context.getProperty(PROP_PUT_CACHE_VALUE_IN_ATTRIBUTE).evaluateAttributeExpressions(flowFile).getValue();
+                    if (!singleKey) {
+                        // Append key to attribute name if multiple keys
+                        attributeName += "." + cacheValueEntry.getKey();
+                    }
+                    //todo перепроверить
+                    String attributeValue = new String(cacheValue.getBytes(), context.getProperty(PROP_CHARACTER_SET).getValue());
+
+                    int maxLength = context.getProperty(PROP_PUT_ATTRIBUTE_MAX_LENGTH).asInteger();
+                    if (maxLength < attributeValue.length()) {
+                        attributeValue = attributeValue.substring(0, maxLength);
+                    }
+
+                    flowFile = session.putAttribute(flowFile, attributeName, attributeValue);
+
+                } else if (cacheKeys.size() > 1) {
+                    throw new IOException("Multiple Cache Value Identifiers specified without Put Cache Value In Attribute set");
+                } else {
+                    // Write single value to content
+                    flowFile = session.write(flowFile, out -> out.write(cacheValue.getBytes()));
+                }
+
+                if (putInAttribute) {
+                    logger.info("Found a cache key of {} and added an attribute to {} with it's value.", new Object[]{cacheKey, flowFile});
+                } else {
+                    logger.info("Found a cache key of {} and replaced the contents of {} with it's value.", new Object[]{cacheKey, flowFile});
+                }
+            }
+        }
+        // If the loop was exited because a cache entry was not found, route to REL_NOT_FOUND; otherwise route to REL_SUCCESS
+        if (notFound) {
+            session.transfer(flowFile, Failure);
+        } else {
+            session.transfer(flowFile, Load);
+        }
+    }
+
+    private void initKeyList(
+            final ProcessSession session,
+            FlowFile flowFile,
+            List<String> cacheKeys,
+            String cacheKey
+    ) {
+        cacheKeys = Arrays.stream(cacheKey.split(",")).filter(path -> !StringUtils.isEmpty(path)).map(String::trim).collect(Collectors.toList());
+        for (int i = 0; i < cacheKeys.size(); i++) {
+            if (StringUtils.isBlank(cacheKeys.get(i))) {
+                // Log first missing identifier, route to failure, and return
+                logger.error("FlowFile {} has no attribute for Cache Entry Identifier in position {}", new Object[]{flowFile, i});
+                flowFile = session.penalize(flowFile);
+                session.transfer(flowFile, Failure);
+                return;
+            }
+        }
+    }
+
 
     public static class CacheValueDeserializer implements Deserializer<String> {
 
