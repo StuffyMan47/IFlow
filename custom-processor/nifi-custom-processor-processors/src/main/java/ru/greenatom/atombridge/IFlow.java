@@ -404,9 +404,7 @@ public class IFlow extends AbstractProcessor {
 
                 targets.eachWithIndex { it, flowIndex ->
                         ArrayList xforms = it.transformations as ArrayList;
-                    //Make a copy of incoming flow file for each target system
-                    //Or use the incoming flowfile for last target
-                    //FlowFile file = flowIndex < numOfTargets - 1 & numOfTargets > 1 ? session.clone(flowFile) : flowFile
+
                     FlowFile file = null;
                     if(flowIndex < numOfTargets - 1 & numOfTargets > 1){
                         file = session.clone(flowFile);
@@ -433,7 +431,7 @@ public class IFlow extends AbstractProcessor {
                             session.putAttribute(file, "xform.path", String.valueOf(xformPath));
                             f = xformPath < xforms.size() - 1 & xforms.size() > 1 ? session.clone(file) : file;
 
-                            def result = processXform(context, session,f, xform, it.id);
+                            var result = processXform(context, session,f, xform, it.id);
                             reporter.modifyContent(f);
                             if (result == null) {
                                 session.remove(f);
@@ -712,7 +710,7 @@ public class IFlow extends AbstractProcessor {
                         for (int j = 0; j < numOfCopies; j++) {
                             f = session.clone(flowFile);
                             session.putAttribute(flowFile, "copy.index", String.valueOf(j + 1));
-                            graylogNotifyStart(f, ffid);
+                            graylogNotifyStart(context, f, ffid);
                             FlowFile ff = null;
                             if (currStageIndx < xforms.size() - 1) {
                                 ff = processXform(context, session, f, xforms, targetId);
@@ -742,7 +740,7 @@ public class IFlow extends AbstractProcessor {
                         session.putAttribute(flowFile, "xform.group", name);
                         break;
                 }
-                graylogNotify(flowFile, name);
+                graylogNotify(context, flowFile, name);
             }
             if (isPropagated) {
                 break;
