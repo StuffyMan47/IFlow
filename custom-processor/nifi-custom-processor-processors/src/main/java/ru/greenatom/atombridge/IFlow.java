@@ -104,7 +104,6 @@ import java.nio.charset.Charset;
 import org.apache.nifi.stream.io.StreamUtils;
 
 import groovy.lang.Binding;
-
 import java.util.logging.Logger;
 
 import static org.codehaus.groovy.tools.xml.DomToGroovy.parse;
@@ -545,7 +544,7 @@ public class IFlow extends AbstractProcessor {
                             session.putAttribute(file, "xform.path", String.valueOf(xformPath));
                             f = xformPath < xforms.size() - 1 & xforms.size() > 1 ? session.clone(file) : file;
 
-                            def result = processXform(context, session, f, xform, it.id);
+                            var result = processXform(context, session, f, xform, it.id);
                             reporter.modifyContent(f);
                             if (result == null) {
                                 session.remove(f);
