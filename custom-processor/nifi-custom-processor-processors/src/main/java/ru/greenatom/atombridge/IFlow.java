@@ -513,13 +513,14 @@ public class IFlow extends AbstractProcessor {
                     FlowFile f = null;
                     //todo Проверить типы
                     //Почему-то xform это JSONObject, хотя в груви он ArrayList, как и xforms
-                    for (JSONObject xform : xforms) {
+                    for (Object xform : xforms) {
                         try {
                             xformPath++;
                             session.putAttribute(file, "xform.path", String.valueOf(xformPath));
                             f = xformPath < xforms.length() - 1 & xforms.length() > 1 ? session.clone(file) : file;
 
-                            var result = processXform(context, session, f, xform, target.get("id").toString());
+                            //костыль с приведением типов
+                            var result = processXform(context, session, f, (ArrayList<JSONObject>) xform, target.get("id").toString());
                             reporter.modifyContent(f);
                             if (result == null) {
                                 session.remove(f);
