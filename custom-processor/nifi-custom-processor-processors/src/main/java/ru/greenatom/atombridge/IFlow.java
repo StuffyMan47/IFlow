@@ -81,6 +81,7 @@ import javax.xml.transform.Source;
 import javax.xml.validation.*;
 
 import org.apache.nifi.util.StringUtils;
+import org.codehaus.groovy.runtime.DefaultGroovyMethods;
 import org.json.XML;
 import org.w3c.dom.Element;
 import org.json.JSONArray;
@@ -484,46 +485,48 @@ public class IFlow extends AbstractProcessor {
                 ProvenanceReporter reporter = session.getProvenanceReporter();
 
 
-                targets.eachWithIndex {
-                    it, flowIndex ->
-                            ArrayList xforms = it.transformations as ArrayList;
+                for(int i = 0; i < targets.length(); i++){
+                    JSONObject target = (JSONObject) targets.get(i);
+                    ArrayList<JSONObject> xforms = (ArrayList<JSONObject>) targets.get(i);
+
                     //Make a copy of incoming flow file for each target system
                     //Or use the incoming flowfile for last target
                     //FlowFile file = flowIndex < numOfTargets - 1 & numOfTargets > 1 ? session.clone(flowFile) : flowFile
                     FlowFile file = null;
-                    if (flowIndex < numOfTargets - 1 & numOfTargets > 1) {
+                    if (i < numOfTargets - 1 & numOfTargets > 1) {
                         file = session.clone(flowFile);
                         reporter.clone(flowFile, file);
                     } else {
                         file = flowFile;
                     }
-                    session.putAttribute(file, "Receiver", it.id);
+                    session.putAttribute(file, "Receiver", target.get("id").toString());
                     int xformPath = -1;
 
-                    if (it.syncValidation == "true") {
+                    if (target.get("syncValidation") == "true") {
                         syncResponse(session, file);
                     }
 
-                    if (it.output == "JSON") {
+                    if (target.get("output") == "JSON") {
                         session.putAttribute(file, "target.output", "JSON");
                     }
 
                     FlowFile f = null;
 
+                    //Почему-то xform это JSONObject, хотя в груви он ArrayList, как и xforms
                     for (JSONObject xform : xforms) {
                         try {
                             xformPath++;
                             session.putAttribute(file, "xform.path", String.valueOf(xformPath));
                             f = xformPath < xforms.size() - 1 & xforms.size() > 1 ? session.clone(file) : file;
 
-                            var result = processXform(context, session, f, xform, it.id);
+                            var result = processXform(context, session, f, xform, target.get("id").toString());
                             reporter.modifyContent(f);
                             if (result == null) {
                                 session.remove(f);
                                 return;
                             } else {
-                                List urlList = it.targetPath instanceof List ? it.targetPath : [it.targetPath];
-                                transferResult(result, sync, urlList, it);
+                                List<String> urlList = target.get("targetPath") instanceof List ? (List<String>) target.get("targetPath") : List.of(String.valueOf(target.get("targetPath")));
+                                transferResult(result, sync, urlList, target);
                             }
                         } catch (Exception ex1) {
                             trace("!!!!!!!Exception: ${ex1.toString()}");
