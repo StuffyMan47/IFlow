@@ -389,7 +389,7 @@ public class IFlow extends AbstractProcessor {
                         }
                         var xform = xforms.get(xformPath);
                         //FlowFile result = processXform(context, session, flowFile, xform, targetId);
-                        FlowFile result = processXform(context, session, flowFile, xforms, targetId);
+                        FlowFile result = processXform(context, session, flowFile, xforms, targetId).get(0);
                         if (result == null) {
                             trace("-ff");
                             session.remove(flowFile);
@@ -565,7 +565,7 @@ public class IFlow extends AbstractProcessor {
 
     //todo тут было это JSONArray xforms,
     //Returns processed FlowFile or ArrayList of processed FlowFiles
-    private FlowFile processXform(
+    private List<FlowFile> processXform(
             final ProcessContext context,
             final ProcessSession session,
             FlowFile flowFile,
@@ -802,7 +802,7 @@ public class IFlow extends AbstractProcessor {
                             graylogNotifyStart(context, f, ffid);
                             FlowFile ff = null;
                             if (currStageIndx < xforms.size() - 1) {
-                                ff = processXform(context, session, f, xforms, targetId);
+                                ff = Objects.requireNonNull(processXform(context, session, f, xforms, targetId)).get(0);
                             }
                             if (ff == null) {
                                 session.remove(f);
@@ -811,7 +811,7 @@ public class IFlow extends AbstractProcessor {
                             }
                         }
                         if (currStageIndx < xforms.size() - 1) {
-                            FlowFile ff = processXform(context, session, flowFile, xforms, targetId);
+                            FlowFile ff = processXform(context, session, flowFile, xforms, targetId).get(0);
                             if (ff == null) {
                                 session.remove(flowFile);
                             } else {
@@ -852,7 +852,9 @@ public class IFlow extends AbstractProcessor {
         }
 
         trace1("FF stage " + flowFile.getAttribute("xform.stage"));
-        return flowFile;
+        List<FlowFile> res = new ArrayList<>();
+        res.add(flowFile);
+        return res;
     }
 
     /**
