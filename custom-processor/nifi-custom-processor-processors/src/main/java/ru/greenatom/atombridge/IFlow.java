@@ -338,18 +338,26 @@ public class IFlow extends AbstractProcessor {
             final Map<String, String> iflowCacheMap = new HashMap<>(1);
             setMap(session, context, flowFile, iflowCacheMap, iflowCacheKeys, iFlowCacheKey, IflowMapCacheLookupClient);
 
+            final Map<String, String> xsdCacheMap = new HashMap<>(1);
+            setMap(session, context, flowFile, xsdCacheMap, xsdCacheKeys, xsdCacheKey, XsdMapCacheLookupClient);
+
+            final Map<String, String> xsltCacheMap = new HashMap<>(1);
+            setMap(session, context, flowFile, xsltCacheMap, xslCacheKeys, xslCacheKey, XsltMapCacheLookupClient);
 
             String ret = iflowCacheMap.get(flowFile.getAttribute("business.process.name"));
-            if (ret != null) {
-                trace("iFlow not found, return 501");
-                logger.error("iFlow named:" + flowFile.getAttribute("business.process.name") + "not found!");
-                session.putAttribute(flowFile, "iflow.error", "iFlow named:" + flowFile.getAttribute("business.process.name") + "not found!");
-                session.putAttribute(flowFile, "iflow.status.code", getResponse("", "501"));
-                session.transfer(flowFile, Failure);
+            if(!validateRet(session, context, flowFile, ret)) {
                 return;
-            } else {
-                trace("readed iFlow config");
             }
+//            if (ret != null) {
+//                trace("iFlow not found, return 501");
+//                logger.error("iFlow named:" + flowFile.getAttribute("business.process.name") + "not found!");
+//                session.putAttribute(flowFile, "iflow.error", "iFlow named:" + flowFile.getAttribute("business.process.name") + "not found!");
+//                session.putAttribute(flowFile, "iflow.status.code", getResponse("", "501"));
+//                session.transfer(flowFile, Failure);
+//                return;
+//            } else {
+//                trace("readed iFlow config");
+//            }
             trace("start parsing json iFlow");
 
             //todo ret всегда null перепроверить
@@ -389,7 +397,7 @@ public class IFlow extends AbstractProcessor {
                         }
                         var xform = xforms.get(xformPath);
                         //FlowFile result = processXform(context, session, flowFile, xform, targetId);
-                        FlowFile result = processXform(context, session, flowFile, xforms, targetId).get(0);
+                        FlowFile result = processXform(context, session, xsltCacheMap, flowFile, xforms, targetId).get(0);
                         if (result == null) {
                             trace("-ff");
                             session.remove(flowFile);
@@ -428,26 +436,27 @@ public class IFlow extends AbstractProcessor {
                 String schemaContent = null;
                 boolean isFailedSchemaExtraction = false;
                 try {
-                    schemaContent = xsdCacheMap.get(iflow.validate,
-                            new Serializer<String>() {
-
-                                @Override
-                                public void serialize(final String value, final OutputStream out) throws SerializationException, IOException {
-                                    out.write(value.getBytes(StandardCharsets.UTF_8));
-                                }
-
-                            },
-                            new Deserializer<String>() {
-
-                                @Override
-                                public String deserialize(final byte[] value) throws DeserializationException, IOException {
-                                    if (value == null) {
-                                        return null;
-                                    }
-                                    return new String(value, StandardCharsets.UTF_8);
-
-                                }
-                            });
+                    schemaContent = xsdCacheMap.get(iflow.get("validate"));
+//
+//                    new Serializer<String>() {
+//
+//                        @Override
+//                        public void serialize(final String value, final OutputStream out) throws SerializationException, IOException {
+//                            out.write(value.getBytes(StandardCharsets.UTF_8));
+//                        }
+//
+//                    },
+//                            new Deserializer<String>() {
+//
+//                                @Override
+//                                public String deserialize(final byte[] value) throws DeserializationException, IOException {
+//                                    if (value == null) {
+//                                        return null;
+//                                    }
+//                                    return new String(value, StandardCharsets.UTF_8);
+//
+//                                }
+//                            }
                     if (schemaContent == null) {
                         throw new IOException("Schema with name" + iflow.get("validate") + "not found");
                     }
@@ -520,7 +529,7 @@ public class IFlow extends AbstractProcessor {
                             f = xformPath < xforms.length() - 1 & xforms.length() > 1 ? session.clone(file) : file;
 
                             //костыль с приведением типов
-                            var result = processXform(context, session, f, (ArrayList<JSONObject>) xform, target.get("id").toString());
+                            var result = processXform(context, session, xsltCacheMap, f, (ArrayList<JSONObject>) xform, target.get("id").toString());
                             reporter.modifyContent(f);
                             if (result == null) {
                                 session.remove(f);
@@ -568,6 +577,7 @@ public class IFlow extends AbstractProcessor {
     private List<FlowFile> processXform(
             final ProcessContext context,
             final ProcessSession session,
+            final Map<String, String> xsltCacheMap,
             FlowFile flowFile,
             ArrayList<JSONObject> xforms,
             String targetId
@@ -768,7 +778,7 @@ public class IFlow extends AbstractProcessor {
                             @Override
                             public void process(InputStream is, OutputStream os) throws IOException {
                                 try {
-                                    applyXslt(is, os, parameter);
+                                    applyXslt(xsltCacheMap, is, os, parameter);
                                 } catch (TransformerException e) {
                                     throw new RuntimeException(e);
                                 }
@@ -802,7 +812,7 @@ public class IFlow extends AbstractProcessor {
                             graylogNotifyStart(context, f, ffid);
                             FlowFile ff = null;
                             if (currStageIndx < xforms.size() - 1) {
-                                ff = Objects.requireNonNull(processXform(context, session, f, xforms, targetId)).get(0);
+                                ff = Objects.requireNonNull(processXform(context, session, xsltCacheMap, f, xforms, targetId)).get(0);
                             }
                             if (ff == null) {
                                 session.remove(f);
@@ -811,7 +821,7 @@ public class IFlow extends AbstractProcessor {
                             }
                         }
                         if (currStageIndx < xforms.size() - 1) {
-                            FlowFile ff = processXform(context, session, flowFile, xforms, targetId).get(0);
+                            FlowFile ff = processXform(context, session, xsltCacheMap, flowFile, xforms, targetId).get(0);
                             if (ff == null) {
                                 session.remove(flowFile);
                             } else {
@@ -1011,32 +1021,34 @@ public class IFlow extends AbstractProcessor {
         return flowFile;
     }
 
-    void applyXslt(ControllerService xsltCacheMap, InputStream flowFileContent, OutputStream os, String transformName) throws IOException, IllegalArgumentException, TransformerException {
+    void applyXslt(Map<String, String> xsltCacheMap, InputStream flowFileContent, OutputStream os, String transformName) throws IOException, IllegalArgumentException, TransformerException {
         if (transformName == null) {
             throw new IOException("XSLT with the name" + transformName + "not found");
         }
         trace("apply xslt transform: " + transformName);
 
-        String xslt = xsltCacheMap.get(transformName,
-                new Serializer<String>() {
+        String xslt = xsltCacheMap.get(transformName);
 
-                    @Override
-                    public void serialize(final String value, final OutputStream out) throws SerializationException, IOException {
-                        out.write(value.getBytes(StandardCharsets.UTF_8));
-                    }
-
-                },
-                new Deserializer<String>() {
-
-                    @Override
-                    public String deserialize(final byte[] value) throws DeserializationException, IOException {
-                        if (value == null) {
-                            return null;
-                        }
-                        return new String(value, StandardCharsets.UTF_8);
-                    }
-
-                });
+//        ,
+//        new Serializer<String>() {
+//
+//            @Override
+//            public void serialize(final String value, final OutputStream out) throws SerializationException, IOException {
+//                out.write(value.getBytes(StandardCharsets.UTF_8));
+//            }
+//
+//        },
+//                new Deserializer<String>() {
+//
+//                    @Override
+//                    public String deserialize(final byte[] value) throws DeserializationException, IOException {
+//                        if (value == null) {
+//                            return null;
+//                        }
+//                        return new String(value, StandardCharsets.UTF_8);
+//                    }
+//
+//                }
 
         if (xslt == null) {
             trace("transfom not found in cache: ${transformName}");
@@ -1574,5 +1586,24 @@ public class IFlow extends AbstractProcessor {
             out.write(value.getBytes(StandardCharsets.UTF_8));
         }
 
+    }
+
+    private boolean validateRet(
+            final ProcessSession session,
+            final ProcessContext context,
+            FlowFile flowFile,
+            String ret
+    ) {
+        if (ret != null) {
+            trace("iFlow not found, return 501");
+            logger.error("iFlow named:" + flowFile.getAttribute("business.process.name") + "not found!");
+            session.putAttribute(flowFile, "iflow.error", "iFlow named:" + flowFile.getAttribute("business.process.name") + "not found!");
+            session.putAttribute(flowFile, "iflow.status.code", getResponse("", "501"));
+            session.transfer(flowFile, Failure);
+            return false;
+        } else {
+            trace("readed iFlow config");
+        }
+        return true;
     }
 }
