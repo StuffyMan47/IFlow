@@ -1081,39 +1081,40 @@ public class IFlow extends AbstractProcessor {
             FlowFile file = (FlowFile) result;
             file = postprocessXform(context, session, file, sync, config);
             trace("After postprocess");
-            urlList.eachWithIndex {
-                j, index ->
-                if (index < urlListSize - 1 & urlListSize > 1) {
+            for (int i = 0; i < urlList.size(); i++){
+                if (i < urlListSize - 1 & urlListSize > 1) {
                     FlowFile f = session.clone(file);
-                    session.putAttribute(f, "target_url", String.valueOf(j));
+                    session.putAttribute(f, "target_url", String.valueOf(urlList.get(i)));
                     session.transfer(f, Transform);
                 } else {
                     if (file == null) {
                         trace("Why null?");
                     }
-                    session.putAttribute(file, "target_url", String.valueOf(j));
+                    session.putAttribute(file, "target_url", String.valueOf(urlList.get(i)));
                     //FlowFile ff = file as FlowFile
                     session.transfer(file, Transform);
                 }
             }
         } else if (result instanceof ArrayList) {
             trace("array");
-            ArrayList list = (ArrayList) result;
+            ArrayList<FlowFile> list = (ArrayList) result;
             trace(String.valueOf(list.size()));
+            for(int i = 0; i < list.size(); i++){
+
+            }
             for (FlowFile f : list) {
                 if (f == null) {
                     continue;
                 }
                 FlowFile f1 = postprocessXform(context, session, f, sync, config);
 
-                urlList.eachWithIndex {
-                    j, index ->
-                    if (index < urlListSize - 1 & urlListSize > 1) {
+                for (int i = 0; i < urlList.size(); i++){
+                    if (i < urlListSize - 1 & urlListSize > 1) {
                         FlowFile fc = session.clone(f1);
-                        session.putAttribute(fc, "target_url", String.valueOf(j));
+                        session.putAttribute(fc, "target_url", String.valueOf(urlList.get(i)));
                         session.transfer(fc, Transform);
                     } else {
-                        session.putAttribute(f, "target_url", String.valueOf(j));
+                        session.putAttribute(f, "target_url", String.valueOf(urlList.get(i)));
                         session.transfer(f1, Transform);
                     }
                 }
