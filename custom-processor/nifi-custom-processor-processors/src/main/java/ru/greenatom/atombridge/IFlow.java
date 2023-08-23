@@ -511,7 +511,7 @@ public class IFlow extends AbstractProcessor {
                     }
 
                     FlowFile f = null;
-
+                    //todo Проверить типы
                     //Почему-то xform это JSONObject, хотя в груви он ArrayList, как и xforms
                     for (JSONObject xform : xforms) {
                         try {
