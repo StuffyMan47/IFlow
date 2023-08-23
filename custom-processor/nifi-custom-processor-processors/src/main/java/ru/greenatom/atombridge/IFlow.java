@@ -487,7 +487,7 @@ public class IFlow extends AbstractProcessor {
 
                 for(int i = 0; i < targets.length(); i++){
                     JSONObject target = (JSONObject) targets.get(i);
-                    ArrayList<JSONObject> xforms = (ArrayList<JSONObject>) targets.get(i);
+                    JSONArray xforms = target.getJSONArray("xforms");
 
                     //Make a copy of incoming flow file for each target system
                     //Or use the incoming flowfile for last target
@@ -511,13 +511,13 @@ public class IFlow extends AbstractProcessor {
                     }
 
                     FlowFile f = null;
-
+                    //todo Проверить типы
                     //Почему-то xform это JSONObject, хотя в груви он ArrayList, как и xforms
                     for (JSONObject xform : xforms) {
                         try {
                             xformPath++;
                             session.putAttribute(file, "xform.path", String.valueOf(xformPath));
-                            f = xformPath < xforms.size() - 1 & xforms.size() > 1 ? session.clone(file) : file;
+                            f = xformPath < xforms.length() - 1 & xforms.length() > 1 ? session.clone(file) : file;
 
                             var result = processXform(context, session, f, xform, target.get("id").toString());
                             reporter.modifyContent(f);
