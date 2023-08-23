@@ -526,7 +526,7 @@ public class IFlow extends AbstractProcessor {
                                 return;
                             } else {
                                 List<String> urlList = target.get("targetPath") instanceof List ? (List<String>) target.get("targetPath") : List.of(String.valueOf(target.get("targetPath")));
-                                transferResult(result, sync, urlList, target);
+                                transferResult(context, session, result, sync, urlList, target);
                             }
                         } catch (Exception ex1) {
                             trace("!!!!!!!Exception: ${ex1.toString()}");
