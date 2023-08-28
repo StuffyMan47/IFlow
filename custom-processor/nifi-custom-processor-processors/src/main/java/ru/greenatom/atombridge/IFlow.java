@@ -94,8 +94,6 @@ import java.nio.charset.Charset;
 
 import org.apache.nifi.stream.io.StreamUtils;
 
-import static org.codehaus.groovy.tools.xml.DomToGroovy.parse;
-
 import org.w3c.dom.*;
 
 import java.io.*;
