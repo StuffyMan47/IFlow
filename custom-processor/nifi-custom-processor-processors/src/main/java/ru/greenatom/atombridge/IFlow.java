@@ -395,9 +395,9 @@ public class IFlow extends AbstractProcessor {
                         if (target.get("output") == "JSON") {
                             session.putAttribute(flowFile, "target.output", "JSON");
                         }
-                        var xform = xforms.get(xformPath);
+                        JSONArray xform = xforms.get(xformPath).getJSONArray("xform");
                         //FlowFile result = processXform(context, session, flowFile, xform, targetId);
-                        FlowFile result = processXform(context, session, xsltCacheMap, flowFile, xforms, targetId).get(0);
+                        FlowFile result = processXform(context, session, xsltCacheMap, flowFile, xform, targetId).get(0);
                         if (result == null) {
                             trace("-ff");
                             session.remove(flowFile);
@@ -497,7 +497,6 @@ public class IFlow extends AbstractProcessor {
                 for(int i = 0; i < targets.length(); i++){
                     JSONObject target = (JSONObject) targets.get(i);
                     JSONArray xforms = target.getJSONArray("xforms");
-
                     //Make a copy of incoming flow file for each target system
                     //Or use the incoming flowfile for last target
                     //FlowFile file = flowIndex < numOfTargets - 1 & numOfTargets > 1 ? session.clone(flowFile) : flowFile
@@ -522,14 +521,15 @@ public class IFlow extends AbstractProcessor {
                     FlowFile f = null;
                     //todo Проверить типы
                     //Почему-то xform это JSONObject, хотя в груви он ArrayList, как и xforms
-                    for (Object xform : xforms) {
+                    //for (var xform : xforms)
+                    for (int j = 0; j < xforms.length(); j++) {
                         try {
                             xformPath++;
                             session.putAttribute(file, "xform.path", String.valueOf(xformPath));
                             f = xformPath < xforms.length() - 1 & xforms.length() > 1 ? session.clone(file) : file;
 
                             //костыль с приведением типов
-                            var result = processXform(context, session, xsltCacheMap, f, (ArrayList<JSONObject>) xform, target.get("id").toString());
+                            var result = processXform(context, session, xsltCacheMap, f, xforms.getJSONArray(j), target.get("id").toString());
                             reporter.modifyContent(f);
                             if (result == null) {
                                 session.remove(f);
@@ -579,7 +579,7 @@ public class IFlow extends AbstractProcessor {
             final ProcessSession session,
             final Map<String, String> xsltCacheMap,
             FlowFile flowFile,
-            ArrayList<JSONObject> xforms,
+            JSONArray xforms,
             String targetId
     ) throws Exception {
         boolean isFlowFileSuppressed = false;
@@ -606,8 +606,8 @@ public class IFlow extends AbstractProcessor {
 
         session.getProvenanceReporter().modifyContent(flowFile, "wsrhsrh");
 
-        for (int i = 0; i < xforms.size(); i++) {
-            JSONObject xform = xforms.get(i);
+        for (int i = 0; i < xforms.length(); i++) {
+            var xform = xforms.get(i);
             //Stop processing flow file if it is suppressed at routing stage
             if (isFlowFileSuppressed) {
                 return null;
@@ -802,7 +802,7 @@ public class IFlow extends AbstractProcessor {
                         session.putAttribute(flowFile, "copy.index", "0");
 
                         FlowFile f = session.clone(flowFile);
-                        if (currStageIndx == xforms.size() - 1) {
+                        if (currStageIndx == xforms.length() - 1) {
                             flowFile = session.removeAttribute(f, "xform.group");
                         }
                         String ffid = flowFile.getAttribute("uuid");
@@ -811,7 +811,7 @@ public class IFlow extends AbstractProcessor {
                             session.putAttribute(flowFile, "copy.index", String.valueOf(j + 1));
                             graylogNotifyStart(context, f, ffid);
                             FlowFile ff = null;
-                            if (currStageIndx < xforms.size() - 1) {
+                            if (currStageIndx < xforms.length() - 1) {
                                 ff = Objects.requireNonNull(processXform(context, session, xsltCacheMap, f, xforms, targetId)).get(0);
                             }
                             if (ff == null) {
@@ -820,7 +820,7 @@ public class IFlow extends AbstractProcessor {
                                 result.add(ff);
                             }
                         }
-                        if (currStageIndx < xforms.size() - 1) {
+                        if (currStageIndx < xforms.length() - 1) {
                             FlowFile ff = processXform(context, session, xsltCacheMap, flowFile, xforms, targetId).get(0);
                             if (ff == null) {
                                 session.remove(flowFile);
@@ -845,8 +845,8 @@ public class IFlow extends AbstractProcessor {
                 break;
             }
         }
-        trace("Stage is " + currStageIndx + " size " + xforms.size());
-        if (currStageIndx == xforms.size() - 1) {
+        trace("Stage is " + currStageIndx + " size " + xforms.length());
+        if (currStageIndx == xforms.length() - 1) {
             if (isPropagated) {
                 if (!flowFile.getAttribute("target.output").equals("JSON")) {
                     //Red pill for last xform to transfer flow file to the upload group
