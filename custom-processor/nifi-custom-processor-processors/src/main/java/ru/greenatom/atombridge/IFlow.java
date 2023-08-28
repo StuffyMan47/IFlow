@@ -120,13 +120,6 @@ public class IFlow extends AbstractProcessor {
 
     private static final String gelfURL = "http://1tesb-s-grl01.gk.rosatom.local:12001/gelf";
 
-    public static final PropertyDescriptor MY_PROPERTY = new PropertyDescriptor
-            .Builder().name("MY_PROPERTY")
-            .displayName("My property")
-            .description("Example Property")
-            .required(true)
-            .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
-            .build();
 
     public static final PropertyDescriptor RECEIVER_SERVICE_ID = new PropertyDescriptor
             .Builder().name("RECEIVER_SERVICE_ID")
@@ -224,17 +217,17 @@ public class IFlow extends AbstractProcessor {
 
     public static final Relationship Load = new Relationship.Builder()
             .name("Load")
-            .description("Example relationship")
+            .description("Обработка по json закончена")
             .build();
 
     public static final Relationship Transform = new Relationship.Builder()
             .name("Transform")
-            .description("Example relationship")
+            .description("Обработка внешней Process group")
             .build();
 
     public static final Relationship Failure = new Relationship.Builder()
             .name("Failure")
-            .description("Example relationship")
+            .description("Ошибка")
             .build();
 
     private List<PropertyDescriptor> descriptors;
@@ -247,7 +240,6 @@ public class IFlow extends AbstractProcessor {
     @Override
     protected void init(final ProcessorInitializationContext context) {
         final List<PropertyDescriptor> descriptors = new ArrayList<PropertyDescriptor>();
-        descriptors.add(MY_PROPERTY);
         descriptors.add(RECEIVER_SERVICE_ID);
         descriptors.add(PROP_DISTRIBUTED_CACHE_SERVICE);
         descriptors.add(PROP_XSDMAP_CACHE_SERVICE);
@@ -520,7 +512,7 @@ public class IFlow extends AbstractProcessor {
                     }
 
                     FlowFile f = null;
-                    //todo Проверить типы
+
                     //Почему-то xform это JSONObject, хотя в груви он ArrayList, как и xforms
                     for (Object xform : xforms) {
                         try {
@@ -528,7 +520,7 @@ public class IFlow extends AbstractProcessor {
                             session.putAttribute(file, "xform.path", String.valueOf(xformPath));
                             f = xformPath < xforms.length() - 1 & xforms.length() > 1 ? session.clone(file) : file;
 
-                            //костыль с приведением типов
+                            //todo надо исправить костыль с приведением типов
                             var result = processXform(context, session, xsltCacheMap, f, (ArrayList<JSONObject>) xform, target.get("id").toString());
                             reporter.modifyContent(f);
                             if (result == null) {
