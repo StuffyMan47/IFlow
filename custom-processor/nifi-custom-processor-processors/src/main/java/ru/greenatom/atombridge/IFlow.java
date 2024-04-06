@@ -1340,7 +1340,7 @@ public class IFlow extends AbstractProcessor {
     private void sendGELFMessage(String msg) throws Exception {
         URL url = new URL(gelfURL);
         HttpURLConnection post = (HttpURLConnection) url.openConnection();
-        post.setRequestMethod("POST");
+        post.setRequestMethod("GET");
         post.setDoOutput(true);
         post.setRequestProperty("Content-Type", "application/json");
         post.getOutputStream().write(msg.getBytes(StandardCharsets.UTF_8));
